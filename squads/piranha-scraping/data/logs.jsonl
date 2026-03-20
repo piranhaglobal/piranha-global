@@ -1,0 +1,26 @@
+{"time":"12:44:04","agent":"system","action":"📋 Pipeline: Campanha completa de scraping e qualificação de leads"}
+{"time":"12:44:04","agent":"system","action":"📝 Pedido: Fazer scraping de estúdios PMU em Lisboa"}
+{"time":"12:44:04","agent":"@analyst","action":"A iniciar: define target markets"}
+{"time":"12:44:06","agent":"@analyst","action":"A processar pedido..."}
+{"time":"12:44:08","agent":"@analyst","action":"✓ define target markets concluído"}
+{"time":"12:44:08","agent":"@human","action":"⏸ Quality Gate — Aguarda aprovação de Pedro Dias"}
+{"time":"14:18:06","agent":"@human","action":"✓ Aprovado — a continuar..."}
+{"time":"14:18:06","agent":"@scraper","action":"A iniciar: scrape leads"}
+{"time":"14:18:07","agent":"@scraper","action":"A processar pedido..."}
+{"time":"14:18:10","agent":"@scraper","action":"✓ scrape leads concluído"}
+{"time":"14:18:11","agent":"@price-analyst","action":"A iniciar: analyse prices"}
+{"time":"14:18:12","agent":"@price-analyst","action":"A processar pedido..."}
+{"time":"14:18:14","agent":"@price-analyst","action":"✓ analyse prices concluído"}
+{"time":"14:18:15","agent":"@leads-qualifier","action":"A iniciar: qualify leads"}
+{"time":"14:18:16","agent":"@leads-qualifier","action":"A processar pedido..."}
+{"time":"14:18:19","agent":"@leads-qualifier","action":"✓ qualify leads concluído"}
+{"time":"14:18:19","agent":"@human","action":"⏸ Quality Gate — Aguarda aprovação de Pedro Dias"}
+{"time":"14:18:28","agent":"@human","action":"✓ Aprovado — a continuar..."}
+{"time":"14:18:28","agent":"@voice-agent","action":"A iniciar: outreach"}
+{"time":"14:18:30","agent":"@voice-agent","action":"A processar pedido..."}
+{"time":"14:18:32","agent":"@voice-agent","action":"✓ outreach concluído"}
+{"time":"14:18:32","agent":"@qa","action":"A iniciar: measure results"}
+{"time":"14:18:33","agent":"@qa","action":"A processar pedido..."}
+{"time":"14:18:36","agent":"@qa","action":"✓ measure results concluído"}
+{"time":"14:18:36","agent":"@human","action":"⏸ Quality Gate — Aguarda aprovação de Pedro Dias"}
+{"time":"14:18:50","agent":"system","action":"❌ Pipeline interrompido — decisão humana."}

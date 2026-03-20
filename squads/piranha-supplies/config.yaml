@@ -1,0 +1,127 @@
+# ===================================================
+# SQUAD PIRANHA-SUPPLIES — Multi-Departamentos
+# Chairman Vision: Pedro Dias — Março 2026
+# ===================================================
+
+name: SUPPLIES
+version: "1.0.0"
+description: "Processos do Supplies — Stocks, Supply Chain, Encomendas e Forecast"
+language: pt-PT
+color: amber
+icon: "📦"
+priority: 4
+status: planning
+
+models:
+  default: claude-sonnet-4-5-20251001
+  strategic: claude-opus-4-6
+  execution: claude-haiku-4-5-20251001
+
+agents:
+  - id: stock-analyst
+    file: agents/stock-analyst.md
+    model: claude-opus-4-6
+    activation: "@stock-analyst"
+    role: pipeline
+    step: 1
+    description: "Análise de stocks e classificação ABC — Produtos A sempre em stock"
+
+  - id: abc-classifier
+    file: agents/abc-classifier.md
+    model: claude-haiku-4-5-20251001
+    activation: "@abc-classifier"
+    role: pipeline
+    step: 2
+    description: "Classificação ABC por tipologia de produto, zona geográfica e fornecedor"
+
+  - id: leadtime-analyst
+    file: agents/leadtime-analyst.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@leadtime-analyst"
+    role: pipeline
+    step: 3
+    description: "Análise diária de lead times da Ásia — consolidação por fornecedor"
+
+  - id: supply-chain
+    file: agents/supply-chain.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@supply-chain"
+    role: pipeline
+    step: 4
+    description: "Análise e sugestão de compra a fornecedor com custo mínimo"
+
+  - id: forecast-agent
+    file: agents/forecast-agent.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@forecast"
+    role: pipeline
+    step: 5
+    description: "Análise de vendas, sazonalidade e forecast de stocks"
+
+  - id: rotation-analyst
+    file: agents/rotation-analyst.md
+    model: claude-haiku-4-5-20251001
+    activation: "@rotation-analyst"
+    role: pipeline
+    step: 6
+    description: "Análise de rotação de linear — apoio ao comercial e campanhas"
+
+  - id: admin-compras
+    file: agents/admin-compras.md
+    model: claude-haiku-4-5-20251001
+    activation: "@admin-compras"
+    role: pipeline
+    step: 7
+    description: "Lançamento administrativo de notas de encomenda por fornecedor"
+
+  - id: qa-supplies
+    file: agents/qa-supplies.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@qa"
+    role: pipeline
+    step: 8
+    description: "Supervisão e validação de decisões de compra e stock"
+
+knowledge_base:
+  path: "../../knowledge"
+  auto_inject: true
+  strategy: keyword_matching
+
+workflows:
+  - id: stock-review
+    description: "Revisão diária de stocks e geração de sugestões de compra"
+    steps:
+      - agent: stock-analyst
+        task: analyse-current-stock
+      - agent: abc-classifier
+        task: classify-products
+      - agent: leadtime-analyst
+        task: check-asia-leadtimes
+      - agent: supply-chain
+        task: suggest-purchases
+        gate: human_approval
+      - agent: admin-compras
+        task: generate-purchase-orders
+        gate: human_approval
+
+  - id: forecast-cycle
+    description: "Ciclo mensal de forecast e sazonalidade"
+    steps:
+      - agent: forecast-agent
+        task: analyse-sales-seasonality
+      - agent: rotation-analyst
+        task: analyse-shelf-rotation
+      - agent: stock-analyst
+        task: adjust-reorder-points
+        gate: human_approval
+
+objectives:
+  - "Stocks baixos com custo mínimo"
+  - "Produtos A sempre em stock — zero out-of-stock"
+  - "Lead times Ásia monitorizados ao dia"
+  - "Lançamento automático de notas de encomenda"
+  - "Humano supervisiona e toma decisões críticas"
+
+integrations:
+  - shopify
+  - evolution-api

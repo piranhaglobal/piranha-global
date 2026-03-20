@@ -1,0 +1,37 @@
+{
+  "name": "aiox-core",
+  "version": "1.0.0",
+  "description": "CLI para scaffoldar projetos de IA com Claude",
+  "main": "src/index.js",
+  "bin": {
+    "aiox-core": "./bin/aiox-core.js"
+  },
+  "scripts": {
+    "test": "node bin/aiox-core.js --help",
+    "pixel-agents": "node scripts/pixel-agents-setup.js",
+    "pixel-agents:demo": "node scripts/pixel-agents-setup.js --demo"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "scaffold",
+    "claude",
+    "agent"
+  ],
+  "author": "piranha-global",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "bcryptjs": "^3.0.3",
+    "chalk": "4.1.2",
+    "commander": "^11.1.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "fs-extra": "^11.3.4",
+    "ora": "5.4.1",
+    "prompts": "^2.4.2",
+    "twilio": "^5.12.2",
+    "yaml": "^2.8.2"
+  }
+}

@@ -1,0 +1,166 @@
+{
+  "company": "Piranha Global",
+  "members": [
+    {
+      "id": "pedro-dias",
+      "name": "Pedro Dias",
+      "role": "Chairman",
+      "level": "leadership",
+      "avatar": "🦈",
+      "color": "red",
+      "squads": ["piranha-leads", "piranha-workshops", "piranha-comms", "piranha-supplies", "piranha-studio"],
+      "approver": true,
+      "note": "Directriz estratégica. Aprovação final em todos os quality gates."
+    },
+    {
+      "id": "teresa-lima",
+      "name": "Teresa Lima Pires",
+      "role": "CEO · CFO · COO",
+      "level": "c-level",
+      "avatar": "👩‍💼",
+      "color": "blue",
+      "squads": ["piranha-supplies", "piranha-studio", "piranha-workshops"],
+      "approver": true,
+      "note": "Responsável por operações, finanças e administração."
+    },
+    {
+      "id": "telo-castro",
+      "name": "Telo de Castro",
+      "role": "Head of Marketing",
+      "level": "director",
+      "avatar": "📣",
+      "color": "purple",
+      "squads": ["piranha-comms", "piranha-leads"],
+      "approver": false,
+      "note": "Lidera os pilares Creative e Performance & Growth."
+    },
+    {
+      "id": "daniela-dias",
+      "name": "Daniela Dias",
+      "role": "Studio Director",
+      "level": "director",
+      "avatar": "✂️",
+      "color": "green",
+      "squads": ["piranha-studio", "piranha-workshops"],
+      "approver": false,
+      "note": "Directora do estúdio B2C. Responsável pelo fecho de workshops por telefone."
+    },
+    {
+      "id": "mariana-vasconcelos",
+      "name": "Mariana Vasconcelos",
+      "role": "Head of Performance & Coordenação",
+      "level": "manager",
+      "avatar": "📈",
+      "color": "amber",
+      "squads": ["piranha-comms", "piranha-leads"],
+      "approver": false,
+      "note": "Lidera o eixo de Growth e E-commerce."
+    },
+    {
+      "id": "carlos-pereira",
+      "name": "Carlos Pereira",
+      "role": "Head of Sales · H&S · Logística",
+      "level": "manager",
+      "avatar": "📦",
+      "color": "amber",
+      "squads": ["piranha-supplies", "piranha-leads"],
+      "approver": false,
+      "note": "Vendas B2B, supply chain e segurança."
+    },
+    {
+      "id": "fernando-dias",
+      "name": "Fernando Dias",
+      "role": "Commercial & Logistics Supervisor",
+      "level": "manager",
+      "avatar": "🚚",
+      "color": "default",
+      "squads": ["piranha-supplies"],
+      "approver": false,
+      "note": "Supervisão logística e comercial."
+    },
+    {
+      "id": "sonia-pereira",
+      "name": "Sónia Pereira",
+      "role": "Finance & Administrative Assistant",
+      "level": "specialist",
+      "avatar": "📋",
+      "color": "default",
+      "squads": [],
+      "approver": false,
+      "note": "Tesouraria, documentação administrativa e controlo de gestão."
+    },
+    {
+      "id": "ze-luis",
+      "name": "Zé Luís",
+      "role": "E-commerce Specialist",
+      "level": "specialist",
+      "avatar": "🛒",
+      "color": "purple",
+      "squads": ["piranha-comms"],
+      "approver": false,
+      "note": "Shopify, growth e operações de e-commerce."
+    },
+    {
+      "id": "miguel-risso",
+      "name": "Miguel Risso",
+      "role": "Brand Visual Designer",
+      "level": "specialist",
+      "avatar": "🎨",
+      "color": "purple",
+      "squads": ["piranha-comms"],
+      "approver": false,
+      "note": "Identidade visual e design criativo."
+    },
+    {
+      "id": "sofia",
+      "name": "Sofia",
+      "role": "Creative Studio",
+      "level": "specialist",
+      "avatar": "🎬",
+      "color": "purple",
+      "squads": ["piranha-comms"],
+      "approver": false,
+      "note": "Produção criativa de conteúdos para estúdio."
+    },
+    {
+      "id": "rafael",
+      "name": "Rafael",
+      "role": "Videography & Multimedia",
+      "level": "specialist",
+      "avatar": "📹",
+      "color": "purple",
+      "squads": ["piranha-comms"],
+      "approver": false,
+      "note": "Vídeo e multimédia."
+    },
+    {
+      "id": "vinicius",
+      "name": "Vinícius",
+      "role": "Sales Operations Specialist",
+      "level": "specialist",
+      "avatar": "⚙️",
+      "color": "default",
+      "squads": ["piranha-leads"],
+      "approver": false,
+      "note": "Operações comerciais e CRM."
+    },
+    {
+      "id": "raquel",
+      "name": "Raquel",
+      "role": "Logistics & Financial Assistant",
+      "level": "specialist",
+      "avatar": "📊",
+      "color": "default",
+      "squads": ["piranha-supplies"],
+      "approver": false,
+      "note": "Apoio logístico e financeiro."
+    }
+  ],
+  "hierarchy": [
+    { "level": "leadership", "label": "Leadership", "color": "red" },
+    { "level": "c-level",   "label": "C-Level",    "color": "blue" },
+    { "level": "director",  "label": "Directores", "color": "purple" },
+    { "level": "manager",   "label": "Managers",   "color": "amber" },
+    { "level": "specialist","label": "Equipa",     "color": "default" }
+  ]
+}

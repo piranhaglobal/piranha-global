@@ -1,0 +1,143 @@
+# ===================================================
+# SQUAD PIRANHA-DEV
+# Time de desenvolvimento Full Stack com IA
+# Piranha Global — Versão 1.0
+# ===================================================
+
+name: piranha-dev
+version: "1.1.0"
+description: "Pipeline de desenvolvimento interno — Architect → Researcher → Mapper → Dev → QA"
+language: pt-PT
+color: default
+icon: "⚙️"
+priority: 0
+status: active
+
+# Modelos Anthropic por função (baseado em economia de tokens)
+models:
+  default: claude-sonnet-4-5-20251001    # Sonnet: padrão para criação e análise
+  strategic: claude-opus-4-6             # Opus: decisões irreversíveis
+  execution: claude-haiku-4-5-20251001   # Haiku: busca, formatação, execução
+
+agents:
+  # ── Suporte / Gestão ──────────────────────────────────────
+  - id: analyst-piranha
+    file: agents/analyst-piranha.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@analyst"
+    role: support
+    description: "Levantamento de requisitos e análise de negócio"
+
+  - id: pm-piranha
+    file: agents/pm-piranha.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@pm"
+    role: support
+    description: "Gestão de produto e backlog"
+
+  - id: sm-piranha
+    file: agents/sm-piranha.md
+    model: claude-haiku-4-5-20251001
+    activation: "@sm"
+    role: support
+    description: "Criação e organização de stories"
+
+  # ── Pipeline de Desenvolvimento (ordem obrigatória) ───────
+  - id: architect-piranha
+    file: agents/architect-piranha.md
+    model: claude-opus-4-6
+    activation: "@architect"
+    role: pipeline
+    step: 1
+    description: "Interpreta o pedido e cria o esboço técnico do projeto"
+
+  - id: researcher-piranha
+    file: agents/researcher-piranha.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@researcher"
+    role: pipeline
+    step: 2
+    description: "Pesquisa e compila documentação das APIs do esboço"
+
+  - id: mapper-piranha
+    file: agents/mapper-piranha.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@mapper"
+    role: pipeline
+    step: 3
+    description: "Mapeia estrutura de arquivos, funções e fluxo de dados"
+
+  - id: dev-piranha
+    file: agents/dev-piranha.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@dev"
+    role: pipeline
+    step: 4
+    description: "Implementa o código seguindo o mapeamento"
+
+  - id: qa-piranha
+    file: agents/qa-piranha.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@qa"
+    role: pipeline
+    step: 5
+    description: "Revisa o código e emite parecer APROVADO ou REPROVADO"
+
+knowledge_base:
+  path: "../../knowledge"
+  auto_inject: true
+  strategy: keyword_matching
+
+workflows:
+  - id: novo-projeto
+    description: "Pipeline completo do esboço ao código revisado"
+    steps:
+      - agent: architect-piranha
+        task: create-blueprint
+        gate: human_approval
+      - agent: researcher-piranha
+        task: compile-docs
+        gate: human_approval
+      - agent: mapper-piranha
+        task: map-code
+        gate: human_approval
+      - agent: dev-piranha
+        task: write-code
+      - agent: qa-piranha
+        task: review-code
+        gate: human_approval
+
+  - id: novo-script
+    description: "Script simples sem pipeline completo"
+    steps:
+      - agent: analyst-piranha
+        task: gather-requirements
+      - agent: dev-piranha
+        task: write-code
+      - agent: qa-piranha
+        task: review-code
+
+  - id: debug
+    description: "Investigação e correção de bugs"
+    steps:
+      - agent: qa-piranha
+        task: identify-issue
+      - agent: dev-piranha
+        task: apply-fix
+      - agent: qa-piranha
+        task: verify-fix
+
+integrations:
+  - shopify
+  - evolution-api
+  - ultravox
+  - cartesia
+  - telnyx
+
+quality_gates:
+  - after: architect-piranha
+    requires: human_approval
+  - after: dev-piranha
+    requires: qa_review
+  - before: production_deploy
+    requires: human_approval

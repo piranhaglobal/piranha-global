@@ -1,0 +1,21 @@
+{"time":"12:55:35","agent":"system","action":"📋 Pipeline: Plano de comunicação mensal integrado"}
+{"time":"12:55:35","agent":"system","action":"📝 Pedido: Testar pipeline completo com quality gates"}
+{"time":"12:55:36","agent":"@head-of-comms","action":"A iniciar: create monthly strategy"}
+{"time":"12:55:37","agent":"@head-of-comms","action":"A processar pedido..."}
+{"time":"12:55:40","agent":"@head-of-comms","action":"✓ create monthly strategy concluído"}
+{"time":"12:55:41","agent":"@human","action":"⏸ Quality Gate — Aguarda aprovação de Pedro Dias"}
+{"time":"12:57:01","agent":"@human","action":"✓ Aprovado — a continuar..."}
+{"time":"12:57:01","agent":"@distributor","action":"A iniciar: distribute validated content"}
+{"time":"12:57:02","agent":"@distributor","action":"A processar pedido..."}
+{"time":"12:57:05","agent":"@distributor","action":"✓ distribute validated content concluído"}
+{"time":"12:57:05","agent":"@social-media","action":"A iniciar: create social content"}
+{"time":"12:57:06","agent":"@social-media","action":"A processar pedido..."}
+{"time":"12:57:09","agent":"@social-media","action":"✓ create social content concluído"}
+{"time":"12:57:09","agent":"@blog-writer","action":"A iniciar: write articles"}
+{"time":"12:57:10","agent":"@blog-writer","action":"A processar pedido..."}
+{"time":"12:57:13","agent":"@blog-writer","action":"✓ write articles concluído"}
+{"time":"12:57:14","agent":"@ads-agent","action":"A iniciar: create ad creatives"}
+{"time":"12:57:15","agent":"@ads-agent","action":"A processar pedido..."}
+{"time":"12:57:18","agent":"@ads-agent","action":"✓ create ad creatives concluído"}
+{"time":"12:57:18","agent":"@human","action":"⏸ Quality Gate — Aguarda aprovação de Pedro Dias"}
+{"time":"14:34:50","agent":"system","action":"❌ Pipeline interrompido — decisão humana."}

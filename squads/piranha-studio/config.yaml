@@ -1,0 +1,102 @@
+# ===================================================
+# SQUAD PIRANHA-STUDIO — Processos do Estúdio
+# Chairman Vision: Pedro Dias — Março 2026
+# ===================================================
+
+name: ESTÚDIO
+version: "1.0.0"
+description: "Processos do Estúdio — Radiografia geral, quick wins e operação"
+language: pt-PT
+color: green
+icon: "🏢"
+priority: 5
+status: backlog
+
+models:
+  default: claude-sonnet-4-5-20251001
+  strategic: claude-opus-4-6
+  execution: claude-haiku-4-5-20251001
+
+agents:
+  - id: studio-analyst
+    file: agents/studio-analyst.md
+    model: claude-opus-4-6
+    activation: "@studio-analyst"
+    role: pipeline
+    step: 1
+    description: "Radiografia geral do estúdio — mapeamento de todos os processos"
+
+  - id: process-mapper
+    file: agents/process-mapper.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@process-mapper"
+    role: pipeline
+    step: 2
+    description: "Mapeamento detalhado de processos — identificação de quick wins"
+
+  - id: quickwins-agent
+    file: agents/quickwins-agent.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@quickwins"
+    role: pipeline
+    step: 3
+    description: "Selecção e priorização de quick wins com maior retorno de horas"
+
+  - id: ops-agent
+    file: agents/ops-agent.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@ops-agent"
+    role: pipeline
+    step: 4
+    description: "Operacionalização e automação dos processos selecionados"
+
+  - id: cx-agent
+    file: agents/cx-agent.md
+    model: claude-haiku-4-5-20251001
+    activation: "@cx-agent"
+    role: pipeline
+    step: 5
+    description: "Monitorização de experiência e satisfação do cliente pós-implementação"
+
+  - id: qa-studio
+    file: agents/qa-studio.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@qa"
+    role: pipeline
+    step: 6
+    description: "Revisão e escalabilidade dos processos implementados"
+
+knowledge_base:
+  path: "../../knowledge"
+  auto_inject: true
+  strategy: keyword_matching
+
+workflows:
+  - id: studio-radiography
+    description: "Radiografia completa do estúdio e blueprint de quick wins"
+    steps:
+      - agent: studio-analyst
+        task: full-radiography
+        gate: human_approval
+      - agent: process-mapper
+        task: map-all-processes
+      - agent: quickwins-agent
+        task: select-quick-wins
+        gate: human_approval
+      - agent: ops-agent
+        task: automate-processes
+      - agent: cx-agent
+        task: monitor-satisfaction
+      - agent: qa-studio
+        task: review-and-scale
+        gate: human_approval
+
+context: >
+  Este trabalho iniciou-se com o André e evoluímos vários processos com sucesso.
+  Não abandonar — perceber como escalar sobretudo após entrada da PIRA e
+  implementação do Shopify Plus.
+
+integrations:
+  - shopify
+  - evolution-api
+  - ultravox

@@ -1,0 +1,104 @@
+# ===================================================
+# SQUAD PIRANHA-LEADS — Projecto SALES
+# Chairman Vision: Pedro Dias — Março 2026
+# ===================================================
+
+name: SALES
+version: "1.0.0"
+description: "Squad de Vendas — Scraping de leads, qualificação e voice agents"
+language: pt-PT
+color: red
+icon: "🦈"
+priority: 1
+status: active
+
+models:
+  default: claude-sonnet-4-5-20251001
+  strategic: claude-opus-4-6
+  execution: claude-haiku-4-5-20251001
+
+agents:
+  - id: analyst-leads
+    file: agents/analyst-leads.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@analyst"
+    role: support
+    description: "Levantamento de requisitos e análise de mercados-alvo (retalho, PMU, tatuagem)"
+
+  - id: scraper-agent
+    file: agents/scraper-agent.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@scraper"
+    role: pipeline
+    step: 1
+    description: "Scraping de empresas de retalho, estúdios PMU, Microblading, Scalping e tatuagem"
+
+  - id: price-analyst
+    file: agents/price-analyst.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@price-analyst"
+    role: pipeline
+    step: 2
+    description: "Análise e scraping de preços de produtos A para penetração de mercado"
+
+  - id: leads-qualifier
+    file: agents/leads-qualifier.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@leads-qualifier"
+    role: pipeline
+    step: 3
+    description: "Qualificação e segmentação de leads por mercado e perfil"
+
+  - id: voice-agent
+    file: agents/voice-agent.md
+    model: claude-opus-4-6
+    activation: "@voice-agent"
+    role: pipeline
+    step: 4
+    description: "Agente de voz (Ultravox + Telnyx) para outreach e recuperação de leads"
+
+  - id: qa-leads
+    file: agents/qa-leads.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@qa"
+    role: pipeline
+    step: 5
+    description: "Revisão de qualidade das leads e métricas de conversão"
+
+knowledge_base:
+  path: "../../knowledge"
+  auto_inject: true
+  strategy: keyword_matching
+
+workflows:
+  - id: scraping-campaign
+    description: "Campanha completa de scraping e qualificação de leads"
+    steps:
+      - agent: analyst-leads
+        task: define-target-markets
+        gate: human_approval
+      - agent: scraper-agent
+        task: scrape-leads
+      - agent: price-analyst
+        task: analyse-prices
+      - agent: leads-qualifier
+        task: qualify-leads
+        gate: human_approval
+      - agent: voice-agent
+        task: outreach
+      - agent: qa-leads
+        task: measure-results
+        gate: human_approval
+
+integrations:
+  - shopify
+  - evolution-api
+  - ultravox
+  - telnyx
+  - klaviyo
+
+metrics:
+  - leads_scraped
+  - leads_qualified
+  - outreach_rate
+  - conversion_rate

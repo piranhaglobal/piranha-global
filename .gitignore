@@ -1,0 +1,32 @@
+# Dependências
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Variáveis de ambiente (NUNCA commitar)
+.env
+.env.local
+.env.*.local
+
+# Skills instaladas localmente (reinstalar via npx skills add)
+.agents/
+.agent/
+.claude/skills/
+.trae/skills/
+
+# Build / output
+dist/
+build/
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/

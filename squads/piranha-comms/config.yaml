@@ -1,0 +1,120 @@
+# ===================================================
+# SQUAD PIRANHA-COMMS — Comunicação 360
+# Chairman Vision: Pedro Dias — Março 2026
+# ===================================================
+
+name: COMUNICAÇÃO
+version: "1.0.0"
+description: "Squad de Comunicação — Head + agentes especializados por canal"
+language: pt-PT
+color: purple
+icon: "📢"
+priority: 3
+status: active
+
+models:
+  default: claude-sonnet-4-5-20251001
+  strategic: claude-opus-4-6
+  execution: claude-haiku-4-5-20251001
+
+agents:
+  - id: head-of-comms
+    file: agents/head-of-comms.md
+    model: claude-opus-4-6
+    activation: "@head-of-comms"
+    role: pipeline
+    step: 1
+    description: "Head of Communications — Arquitecto de estratégia e planos de comunicação 360"
+
+  - id: distributor-agent
+    file: agents/distributor-agent.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@distributor"
+    role: pipeline
+    step: 2
+    description: "Distribuição de conteúdo validado por Pedro Dias por todos os canais"
+
+  - id: social-media-agent
+    file: agents/social-media-agent.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@social-media"
+    role: pipeline
+    step: 3
+    description: "Social Media — Conteúdo educacional, técnico, inspiracional e de comunidade"
+
+  - id: ecommerce-agent
+    file: agents/ecommerce-agent.md
+    model: claude-haiku-4-5-20251001
+    activation: "@ecommerce"
+    role: pipeline
+    step: 4
+    description: "E-commerce — Conteúdo para produto, colecções e campanhas Shopify"
+
+  - id: ads-agent
+    file: agents/ads-agent.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@ads-agent"
+    role: pipeline
+    step: 5
+    description: "ADS — Criação e optimização de anúncios por plataforma"
+
+  - id: blog-writer
+    file: agents/blog-writer.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@blog-writer"
+    role: pipeline
+    step: 6
+    description: "Blog — Artigos SEO, conteúdo técnico e educacional"
+
+  - id: email-marketing
+    file: agents/email-marketing.md
+    model: claude-haiku-4-5-20251001
+    activation: "@email-mkt"
+    role: pipeline
+    step: 7
+    description: "Email Marketing — Segmentação, flows e campanhas Klaviyo"
+
+  - id: lead-magnets
+    file: agents/lead-magnets.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@lead-magnets"
+    role: pipeline
+    step: 8
+    description: "Lead Magnets — E-books, infográficos e conteúdo de captação"
+
+knowledge_base:
+  path: "../../knowledge"
+  auto_inject: true
+  strategy: keyword_matching
+
+workflows:
+  - id: content-plan
+    description: "Plano de comunicação mensal integrado"
+    steps:
+      - agent: head-of-comms
+        task: create-monthly-strategy
+        gate: human_approval
+      - agent: distributor-agent
+        task: distribute-validated-content
+      - agent: social-media-agent
+        task: create-social-content
+      - agent: blog-writer
+        task: write-articles
+      - agent: ads-agent
+        task: create-ad-creatives
+        gate: human_approval
+      - agent: email-marketing
+        task: schedule-email-campaigns
+      - agent: lead-magnets
+        task: create-lead-magnets
+
+content_pillars:
+  - Conteúdo Educacional
+  - Conteúdo Técnico
+  - Conteúdo Inspiracional
+  - Conteúdo de Comunidade
+
+integrations:
+  - shopify
+  - klaviyo
+  - instagram-graph-api

@@ -1,0 +1,103 @@
+# ===================================================
+# SQUAD PIRANHA-WORKSHOPS
+# Chairman Vision: Pedro Dias — Março 2026
+# ===================================================
+
+name: WORKSHOPS
+version: "1.0.0"
+description: "Automatização completa do funil de Workshops — da captação ao fecho"
+language: pt-PT
+color: blue
+icon: "🎓"
+priority: 2
+status: planning
+
+models:
+  default: claude-sonnet-4-5-20251001
+  strategic: claude-opus-4-6
+  execution: claude-haiku-4-5-20251001
+
+agents:
+  - id: blueprint-agent
+    file: agents/blueprint-agent.md
+    model: claude-opus-4-6
+    activation: "@blueprint"
+    role: pipeline
+    step: 1
+    description: "Radiografia do funil actual e blueprint de toda a jornada do aluno"
+
+  - id: lp-builder
+    file: agents/lp-builder.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@lp-builder"
+    role: pipeline
+    step: 2
+    description: "Landing Page de Workshops: copy, design Piranha, formulários"
+
+  - id: ads-workshops
+    file: agents/ads-workshops.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@ads-workshops"
+    role: pipeline
+    step: 3
+    description: "Estratégia e criação de Ads para captação de leads qualificadas para workshops"
+
+  - id: crm-automation
+    file: agents/crm-automation.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@crm-automation"
+    role: pipeline
+    step: 4
+    description: "Automação pós-fecho: marcação, sinal, confirmações, vésperas, conteúdos"
+
+  - id: loyalty-agent
+    file: agents/loyalty-agent.md
+    model: claude-haiku-4-5-20251001
+    activation: "@loyalty"
+    role: pipeline
+    step: 5
+    description: "Tier de fidelização para alunos, cupões e segmentação de listas"
+
+  - id: qa-workshops
+    file: agents/qa-workshops.md
+    model: claude-sonnet-4-5-20251001
+    activation: "@qa"
+    role: pipeline
+    step: 6
+    description: "Revisão do funil completo e métricas de captação"
+
+knowledge_base:
+  path: "../../knowledge"
+  auto_inject: true
+  strategy: keyword_matching
+
+workflows:
+  - id: workshop-funnel
+    description: "Blueprint completo do funil de workshops"
+    steps:
+      - agent: blueprint-agent
+        task: radiograph-current-funnel
+        gate: human_approval
+      - agent: lp-builder
+        task: build-landing-page
+        gate: human_approval
+      - agent: ads-workshops
+        task: create-ad-strategy
+        gate: human_approval
+      - agent: crm-automation
+        task: automate-post-close
+      - agent: loyalty-agent
+        task: setup-loyalty-tier
+      - agent: qa-workshops
+        task: review-full-funnel
+        gate: human_approval
+
+integrations:
+  - shopify
+  - evolution-api
+  - klaviyo
+
+notes: >
+  A Daniela fecha por telefone e é muito eficaz. O foco da automação é
+  APÓS o fecho: marcação, sinal, confirmações, logística, conteúdos, loyalty.
+  Não automatizar o fecho telefónico.

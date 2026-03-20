@@ -1,0 +1,21 @@
+[Unit]
+Description=Piranha Supplies Voice — Webhook Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/piranha-supplies-voice
+EnvironmentFile=/opt/piranha-supplies-voice/.env
+ExecStart=/opt/piranha-supplies-voice/venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:5000 \
+    --timeout 30 \
+    --access-logfile /var/log/piranha-voice/access.log \
+    --error-logfile /var/log/piranha-voice/error.log \
+    "src.handlers.webhook_handler:create_app()"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

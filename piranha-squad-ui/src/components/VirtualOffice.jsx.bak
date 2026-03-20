@@ -1,0 +1,183 @@
+import { useState, useEffect } from 'react';
+import { Bot, User, MessageSquare, Code, Search, CheckCircle2 } from 'lucide-react';
+
+export default function VirtualOffice({ agents }) {
+    const [actionLog, setActionLog] = useState([]);
+    const [activeAgent, setActiveAgent] = useState(null);
+    const [statusText, setStatusText] = useState('');
+    const [gameState, setGameState] = useState(null);
+
+    // Poll logs from Python Orchestrator
+    useEffect(() => {
+        let timer;
+        const fetchLogs = async () => {
+            try {
+                const res = await fetch('http://localhost:3001/api/logs');
+                const data = await res.json();
+                
+                if (data.logs && data.logs.length > 0) {
+                    const formattedLogs = data.logs.reverse();
+                    setActionLog(formattedLogs);
+                    
+                    const latest = formattedLogs[0];
+                    const activeId = agents.find(a => a.data.label === latest.agent || a.id === latest.agent)?.id || null;
+                    if (latest.agent === 'system' || latest.agent === '@human') {
+                        setActiveAgent('human-user');
+                    } else if (activeId) {
+                        setActiveAgent(activeId);
+                    }
+                    setStatusText(latest.action);
+                } else {
+                    setActionLog([]);
+                    setActiveAgent(null);
+                    setStatusText('');
+                }
+
+                if (data.state) {
+                    setGameState(data.state);
+                } else {
+                    setGameState(null);
+                }
+            } catch (err) {
+                console.error(err);
+            }
+            timer = setTimeout(fetchLogs, 1500);
+        };
+        fetchLogs();
+        return () => clearTimeout(timer);
+    }, [agents]);
+
+    const sendApproval = async (decision) => {
+        await fetch('http://localhost:3001/api/approve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision })
+        });
+        setGameState(null);
+    };
+
+    return (
+        <div className="flex-1 h-full flex flex-col bg-[#1e1e24] relative overflow-hidden font-mono">
+            {/* Grid Floor */}
+            <div 
+                className="absolute inset-0 opacity-20 pointer-events-none" 
+                style={{
+                    backgroundImage: 'linear-gradient(#3f3f46 1px, transparent 1px), linear-gradient(90deg, #3f3f46 1px, transparent 1px)',
+                    backgroundSize: '40px 40px'
+                }}
+            />
+
+            {/* Top Bar */}
+            <div className="h-14 bg-gray-900/90 border-b border-gray-800 flex items-center px-6 justify-between z-10">
+                <div className="flex items-center gap-3">
+                    <span className="flex h-3 w-3 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                    </span>
+                    <span className="text-gray-300 font-bold uppercase tracking-widest text-sm">Piranha Virtual Office</span>
+                </div>
+            </div>
+
+            {/* Office Space */}
+            <div className="flex-1 relative p-10 flex flex-wrap gap-12 justify-center items-center content-center z-10 perspective-1000">
+                {agents.map((agent, i) => {
+                    const isActive = activeAgent === agent.id;
+                    const isHuman = agent.id === 'human-user';
+                    
+                    return (
+                        <div key={agent.id} className="relative flex flex-col items-center group transition-all duration-500" style={{ transform: isActive ? 'scale(1.1)' : 'scale(1)' }}>
+                            {/* Speech Bubble */}
+                            <div className={`absolute -top-16 bg-white text-gray-900 text-xs px-3 py-2 rounded-lg font-bold shadow-xl transition-all duration-300 whitespace-nowrap z-20 ${isActive ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'}`}>
+                                {isHuman ? '🤔 Analisando...' : (
+                                    <span className="flex items-center gap-2">
+                                        <div className="flex gap-1">
+                                            <span className="w-1.5 h-1.5 bg-gray-600 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                                            <span className="w-1.5 h-1.5 bg-gray-600 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                                            <span className="w-1.5 h-1.5 bg-gray-600 rounded-full animate-bounce"></span>
+                                        </div>
+                                        {statusText}
+                                    </span>
+                                )}
+                                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 border-solid border-t-white border-t-8 border-x-transparent border-x-8 border-b-0"></div>
+                            </div>
+
+                            {/* Desk / Computer representation */}
+                            <div className="relative">
+                                {/* Monitor Glow (if active) */}
+                                {isActive && !isHuman && (
+                                    <div className="absolute inset-0 bg-blue-500/30 blur-xl rounded-full scale-150 animate-pulse"></div>
+                                )}
+                                
+                                {/* Character Body */}
+                                <div className={`w-16 h-16 rounded-xl flex items-center justify-center shadow-2xl relative z-10 transition-colors duration-300 ${isHuman ? 'bg-indigo-600 border-2 border-indigo-400' : (isActive ? 'bg-blue-600 border-2 border-blue-300' : 'bg-gray-800 border-2 border-gray-700')}`}>
+                                    {isHuman ? <User size={32} className="text-white" /> : <Bot size={32} className={isActive ? 'text-white animate-bounce' : 'text-gray-400'} />}
+                                    
+                                    {/* Action indicator badge */}
+                                    {isActive && !isHuman && (
+                                        <div className="absolute -bottom-2 -right-2 bg-yellow-500 text-black p-1.5 rounded-full ring-2 ring-gray-900 animate-spin-slow">
+                                            {agent.data.role === 'qa' ? <CheckCircle2 size={12} /> : 
+                                             agent.data.role === 'architect' ? <Search size={12} /> : 
+                                             <Code size={12} />}
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* Desk base */}
+                                {!isHuman && (
+                                    <div className="w-24 h-4 bg-gray-700 rounded-b-md mx-auto -mt-1 border-t border-gray-600 shadow-xl opacity-80"></div>
+                                )}
+                            </div>
+                            
+                            <div className="mt-4 text-center">
+                                <span className={`text-sm font-bold block ${isActive ? 'text-white' : 'text-gray-400'}`}>
+                                    {agent.data.label}
+                                </span>
+                                <span className="text-[10px] text-gray-500 bg-gray-900/50 px-2 py-1 rounded-md mt-1 block">
+                                    {agent.data.model || 'System'}
+                                </span>
+                            </div>
+
+                            {/* Human Interaction Popup */}
+                            {isHuman && gameState && gameState.status === 'waiting_human_approval' && (
+                                <div className="absolute top-20 bg-gray-900 border border-indigo-500 rounded-lg p-4 w-56 z-50 shadow-2xl animate-in fade-in slide-in-from-bottom-2">
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <span className="relative flex h-3 w-3">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-pink-400 opacity-75"></span>
+                                            <span className="relative inline-flex rounded-full h-3 w-3 bg-pink-500"></span>
+                                        </span>
+                                        <span className="text-xs font-bold text-pink-400 uppercase tracking-wider">Quality Gate</span>
+                                    </div>
+                                    <p className="text-xs text-gray-300 font-medium mb-4 leading-relaxed">{gameState.prompt}</p>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => sendApproval('s')} className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 rounded-md transition-colors shadow-lg">Aprovar</button>
+                                        <button onClick={() => sendApproval('n')} className="flex-1 bg-gray-800 hover:bg-red-900/50 hover:text-red-400 text-gray-400 font-bold border border-gray-700 hover:border-red-900/50 text-xs py-2 rounded-md transition-colors shadow-lg">Rejeitar</button>
+                                    </div>
+                                    <div className="absolute -top-2 left-1/2 -translate-x-1/2 border-solid border-b-gray-900 border-b-8 border-x-transparent border-x-8 border-t-0"></div>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+
+            {/* Execution Logs / Terminal */}
+            <div className="h-64 bg-[#0d1117] border-t border-gray-800 flex flex-col z-20">
+                <div className="px-4 py-2 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
+                    <span className="text-xs font-bold text-gray-400">orchestrator.py - Live Execution Logs</span>
+                </div>
+                <div className="flex-1 p-4 overflow-y-auto font-mono text-xs flex flex-col gap-2 custom-scrollbar">
+                    {actionLog.map((log, i) => (
+                        <div key={i} className={`flex gap-3 ${i === 0 ? 'text-gray-200' : 'text-gray-500'}`}>
+                            <span className="text-blue-500 opacity-70">[{log.time}]</span>
+                            <span className={log.agent === '@human' ? 'text-indigo-400 font-bold' : 'text-green-400 font-bold'}>{log.agent}</span>
+                            <span>{log.action}</span>
+                        </div>
+                    ))}
+                    {actionLog.length === 0 && (
+                        <div className="text-gray-600 animate-pulse">A aguardar orquestrador...</div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}

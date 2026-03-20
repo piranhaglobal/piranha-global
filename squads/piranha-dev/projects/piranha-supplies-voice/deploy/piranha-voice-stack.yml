@@ -1,0 +1,31 @@
+version: "3.7"
+
+services:
+
+## --------------------------- PIRANHA VOICE --------------------------- ##
+
+  piranha_voice:
+    image: piranha-voice:latest
+    env_file:
+      - /opt/piranha-supplies-voice/.env
+    networks:
+      - PiranhaNet
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.piranha-voice.rule=Host(`call.piranhasupplies.com`)"
+        - "traefik.http.routers.piranha-voice.entrypoints=websecure"
+        - "traefik.http.routers.piranha-voice.tls=true"
+        - "traefik.http.routers.piranha-voice.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.piranha-voice.loadbalancer.server.port=5000"
+
+## --------------------------- PIRANHA VOICE --------------------------- ##
+
+networks:
+  PiranhaNet:
+    external: true
+    name: PiranhaNet
