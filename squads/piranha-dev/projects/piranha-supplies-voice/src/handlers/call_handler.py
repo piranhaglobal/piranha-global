@@ -140,37 +140,69 @@ def _format_products(products: list[dict], language: str = "pt") -> str:
 def process_checkouts(checkouts: list[dict]) -> None:
     """
     Processa checkouts elegíveis de forma SEQUENCIAL.
-    Verifica janela de chamada antes de cada ligação.
-    Filtra leads fora da União Europeia.
+
+    Fluxo:
+      1. Processa primeiro os leads de segunda tentativa (retry) cujo dia chegou.
+      2. Processa os novos checkouts do Shopify.
+
+    Para cada lead:
+      - Verifica janela de chamadas NO TIMEZONE DO PAÍS DE DESTINO.
+      - Filtra países fora da União Europeia.
+      - Nunca liga ao mesmo lead duas vezes (exceto retry agendado).
+
     Args:
-        checkouts: lista de dicts retornados por ShopifyClient
+        checkouts: lista de dicts retornados por ShopifyClient (novos leads)
     """
+    from datetime import date
+    today_str = date.today().isoformat()
+
+    # 1. Retries: leads que não atenderam na 1.ª tentativa e hoje é o dia agendado
+    retry_leads = call_tracker.get_retry_due(today_str)
+    if retry_leads:
+        logger.info(f"A processar {len(retry_leads)} lead(s) de segunda tentativa (retry)")
+        _process_lead_list(retry_leads, is_retry=True)
+
+    # 2. Novos leads do Shopify
     if not checkouts:
-        logger.info("Nenhum checkout elegível para ligar hoje.")
+        logger.info("Nenhum checkout novo elegível para ligar hoje.")
         return
 
-    logger.info(f"A iniciar processamento de {len(checkouts)} checkout(s)")
+    logger.info(f"A iniciar processamento de {len(checkouts)} checkout(s) novo(s)")
+    _process_lead_list(checkouts, is_retry=False)
 
+
+def _process_lead_list(checkouts: list[dict], is_retry: bool) -> None:
+    """
+    Itera sobre uma lista de checkouts e processa cada ligação.
+
+    Args:
+        checkouts: lista de dicts com dados do lead
+        is_retry: True = segunda tentativa (bypass ao is_called check)
+    """
     for checkout in checkouts:
-        # Verificar janela de chamadas antes de cada ligação
-        if not is_calling_hours():
-            logger.info("Fora da janela de chamadas. A suspender processamento.")
+        country = checkout.get("country_code", "PT")
+
+        # Verificar janela de chamadas no timezone do país de destino
+        if not is_calling_hours(country):
+            logger.info(
+                f"Fora da janela de chamadas para {country}. "
+                "A suspender processamento."
+            )
             break
 
-        country = checkout.get("country_code", "")
         # Filtrar países fora da UE
         if country not in _EU_COUNTRIES:
             logger.info(f"Skip: país {country!r} fora da União Europeia — checkout {checkout['id']}")
             continue
 
-        if call_tracker.is_called(checkout["id"]):
-            call_tracker.mark(checkout["id"], checkout["phone"], checkout["name"], "already_called_skip")
+        # Para novos leads: verificar se já foi contactado
+        if not is_retry and call_tracker.is_called(checkout["id"]):
             logger.info(f"Skip: checkout {checkout['id']} já foi contactado anteriormente.")
             continue
 
         call_done = threading.Event()
         status = process_single(checkout, call_done)
-        logger.info(f"Checkout {checkout['id']} → {status}")
+        logger.info(f"Checkout {checkout['id']} → {status} (tentativa={'2' if is_retry else '1'})")
 
         if status == "called":
             logger.info("A aguardar fim da ligação antes de avançar...")
@@ -193,6 +225,9 @@ def process_single(checkout: dict, call_done: threading.Event) -> str:
     try:
         context = _build_call_context(checkout)
 
+        existing_attempts = call_tracker.get_attempts(checkout_id)
+        attempts = existing_attempts + 1
+
         ultravox = UltravoxClient()
         session = ultravox.create_call(
             system_prompt=context["system_prompt"],
@@ -202,18 +237,30 @@ def process_single(checkout: dict, call_done: threading.Event) -> str:
         join_url = session["joinUrl"]
         ultravox_call_id = session["callId"]
 
-        twilio = TwilioClient()
-        call_data = twilio.make_call(phone, twilio.build_twiml_url(), twilio.build_status_callback_url())
-        call_sid = call_data.get("sid", "")
-
+        # Regista sessão com chave temporária (checkout_id) ANTES de disparar a
+        # chamada Twilio — evita race condition onde o Twilio invoca o webhook
+        # TwiML antes de active_sessions ter o call_sid real.
+        _tmp_key = f"pending-{checkout_id}"
         with _sessions_lock:
-            active_sessions[call_sid] = {
+            active_sessions[_tmp_key] = {
                 "join_url": join_url,
                 "ultravox_call_id": ultravox_call_id,
                 "call_done_event": call_done,
             }
 
-        call_tracker.mark(checkout_id, phone, checkout["name"], "called", call_sid, ultravox_call_id)
+        twilio = TwilioClient()
+        call_data = twilio.make_call(phone, twilio.build_twiml_url(), twilio.build_status_callback_url())
+        call_sid = call_data.get("sid", "")
+
+        # Migra para a chave real (call_sid) assim que temos o SID
+        with _sessions_lock:
+            active_sessions[call_sid] = active_sessions.pop(_tmp_key)
+
+        call_tracker.mark(
+            checkout_id, phone, checkout["name"], "called",
+            call_sid, ultravox_call_id,
+            attempts=attempts, checkout_data=checkout,
+        )
 
         logger.info(
             f"Ligação iniciada | checkout={checkout_id} | phone={phone} "

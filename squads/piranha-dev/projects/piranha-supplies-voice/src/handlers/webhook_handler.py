@@ -8,6 +8,7 @@ from src.handlers.call_handler import _sessions_lock, active_sessions, process_s
 from src.utils import call_tracker
 from src.utils.call_tracker import log_result_by_ultravox_id
 from src.utils.logger import setup_logger
+from src.utils.schedule_checker import next_business_day
 
 logger = setup_logger(__name__)
 
@@ -33,7 +34,7 @@ def create_app() -> Flask:
             session = active_sessions.get(call_sid)
 
         if not session:
-            logger.warning(f"TwiML sem sessão activa: {call_sid}")
+            logger.warning(f"TwiML sem sessão activa para sid={call_sid} — a aguardar migração de pending...")
             return Response(_build_twiml(""), mimetype="application/xml", status=200)
 
         join_url = session["join_url"]
@@ -56,8 +57,28 @@ def create_app() -> Flask:
             logger.info(f"Webhook Twilio status | sid={call_sid} | status={call_status}")
 
         if call_status in {"completed", "busy", "failed", "no-answer", "canceled"}:
-            tracker_status = "completed" if call_status == "completed" else "failed"
-            call_tracker.update_status(call_sid, tracker_status)
+            if call_status == "completed":
+                call_tracker.update_status(call_sid, "completed")
+            else:
+                # Chamada não atendida — verificar tentativas para retry ou encerrar
+                result = call_tracker.get_record_by_provider_id(call_sid)
+                if result:
+                    checkout_id, record = result
+                    if record.get("attempts", 1) < 2:
+                        retry_date = next_business_day().isoformat()
+                        call_tracker.mark_for_retry(checkout_id, retry_date)
+                        logger.info(
+                            f"Retry agendado | sid={call_sid} | checkout={checkout_id} "
+                            f"| data={retry_date}"
+                        )
+                    else:
+                        call_tracker.mark_no_answer_final(checkout_id)
+                        logger.info(
+                            f"Lead encerrado definitivamente | sid={call_sid} | checkout={checkout_id}"
+                        )
+                else:
+                    call_tracker.update_status(call_sid, "failed")
+
             with _sessions_lock:
                 session = active_sessions.pop(call_sid, None)
             if session and session.get("call_done_event"):
@@ -136,19 +157,29 @@ def create_app() -> Flask:
         )
 
         # Encontrar o call_sid Twilio correspondente ao ultravox_call_id
+        # Fallback 1: header vazio mas há exatamente 1 sessão ativa (chamadas são sequenciais)
         call_sid = None
+        resolved_ultravox_id = ultravox_call_id
         with _sessions_lock:
-            for sid, session in active_sessions.items():
-                if session.get("ultravox_call_id") == ultravox_call_id:
-                    call_sid = sid
-                    break
+            if ultravox_call_id:
+                for sid, session in active_sessions.items():
+                    if session.get("ultravox_call_id") == ultravox_call_id:
+                        call_sid = sid
+                        break
+            if not call_sid and len(active_sessions) == 1:
+                call_sid, session = next(iter(active_sessions.items()))
+                resolved_ultravox_id = session.get("ultravox_call_id", "")
+                logger.info(
+                    f"logCallResult: header X-UV-Call-Id vazio — "
+                    f"a usar sessão única ativa | sid={call_sid} | ultravox_id={resolved_ultravox_id}"
+                )
 
         if call_sid:
             call_tracker.log_result(call_sid, motivo_principal, sub_motivo, resultado)
         else:
-            # Sessão Twilio já removida — procura pelo ultravox_call_id persistido no tracker
-            logger.info(f"logCallResult: sessão activa não encontrada, a usar fallback por ultravox_id={ultravox_call_id}")
-            log_result_by_ultravox_id(ultravox_call_id, motivo_principal, sub_motivo, resultado)
+            # Fallback 2: sessão já removida — procura pelo ultravox_call_id no tracker
+            logger.info(f"logCallResult: sem sessão ativa, a usar fallback por ultravox_id={resolved_ultravox_id}")
+            log_result_by_ultravox_id(resolved_ultravox_id, motivo_principal, sub_motivo, resultado)
 
         return jsonify({"status": "ok"}), 200
 

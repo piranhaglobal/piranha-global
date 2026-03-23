@@ -8,6 +8,8 @@ services:
     image: piranha-voice:latest
     env_file:
       - /opt/piranha-supplies-voice/.env
+    volumes:
+      - /opt/piranha-voice-data/called.json:/app/called.json
     networks:
       - PiranhaNet
     deploy:
