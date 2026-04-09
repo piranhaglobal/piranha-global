@@ -120,6 +120,7 @@ class ShopifyClient:
         phone = (
             checkout.get("phone")
             or customer.get("phone")
+            or shipping.get("phone")
             or ""
         ).strip()
 

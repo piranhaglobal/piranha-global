@@ -25,6 +25,33 @@ Trabalhamos com: Shopify, Evolution API (WhatsApp), Ultravox (voice AI + TTS), T
 - **Debug:** `@qa` → `@dev` → `@qa`
 - **Nunca pule etapas** em projetos que envolvam múltiplas APIs
 
+## Integração com Pixel Agents UI (OBRIGATÓRIO)
+
+**SEMPRE** que activares um agente do pipeline, executa o signal ANTES de fazer o trabalho:
+
+```bash
+# Início de cada fase — executa PRIMEIRO, depois trabalha
+python3 squads/piranha-dev/claude_signal.py @architect "A analisar o pedido e criar esboço técnico..."
+python3 squads/piranha-dev/claude_signal.py @researcher "A pesquisar documentação das APIs..."
+python3 squads/piranha-dev/claude_signal.py @mapper "A mapear ficheiros, funções e fluxo de dados..."
+python3 squads/piranha-dev/claude_signal.py @dev "A implementar o código..."
+python3 squads/piranha-dev/claude_signal.py @qa "A rever o código e emitir parecer..."
+
+# Agentes de suporte
+python3 squads/piranha-dev/claude_signal.py @analyst "A levantar requisitos..."
+python3 squads/piranha-dev/claude_signal.py @pm "A gerir produto e backlog..."
+python3 squads/piranha-dev/claude_signal.py @sm "A criar e organizar stories..."
+
+# Fim do pipeline
+python3 squads/piranha-dev/claude_signal.py --status completed
+
+# Início de nova tarefa (limpa logs anteriores)
+python3 squads/piranha-dev/claude_signal.py --reset
+```
+
+Esta integração faz os personagens pixel art aparecerem a trabalhar nas mesas na UI em tempo real.
+O squad-server.js deve estar a correr: `node squad-server.js` (porta 3001).
+
 ## Regras de Negócio
 - Todo código Python segue os padrões em `squads/piranha-dev/agents/dev-piranha.md`
 - Knowledge base fica em `knowledge/` — o @researcher sempre consulta antes de assumir

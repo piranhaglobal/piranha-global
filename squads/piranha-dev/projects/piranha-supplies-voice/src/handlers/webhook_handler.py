@@ -105,6 +105,314 @@ def create_app() -> Flask:
         """Health check — confirma que o servidor está em funcionamento."""
         return Response("OK", status=200)
 
+    @app.route("/admin/calls/<checkout_id>/transcript", methods=["GET"])
+    def admin_transcript(checkout_id: str) -> Response:
+        """
+        Retorna a transcrição de uma chamada como JSON.
+        Chamado via AJAX pelo dashboard para popular o modal.
+        """
+        import json
+        from pathlib import Path
+        from src.clients.ultravox import UltravoxClient
+
+        called_file = Path(__file__).parent.parent.parent / "called.json"
+        try:
+            data = json.loads(called_file.read_text(encoding="utf-8")) if called_file.exists() else {}
+        except Exception:
+            return jsonify({"error": "called.json ilegível"}), 500
+
+        record = data.get(str(checkout_id))
+        if not record:
+            return jsonify({"error": "checkout não encontrado"}), 404
+
+        ultravox_call_id = record.get("ultravox_call_id")
+        if not ultravox_call_id:
+            return jsonify({"error": "sem ultravox_call_id — chamada não iniciada"}), 404
+
+        try:
+            uv = UltravoxClient()
+            messages = uv.get_transcript(ultravox_call_id)
+            return jsonify({
+                "checkout_id": checkout_id,
+                "name": record.get("name", "—"),
+                "phone": record.get("phone", "—"),
+                "status": record.get("status", "—"),
+                "ultravox_call_id": ultravox_call_id,
+                "messages": messages,
+            })
+        except Exception as e:
+            logger.error(f"Erro ao buscar transcrição Ultravox: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/admin/calls", methods=["GET"])
+    def admin_calls() -> Response:
+        """
+        Dashboard HTML de chamadas — lista todas as interações com leads.
+        Acesso: https://call.piranhasupplies.com/admin/calls
+        """
+        import json
+        from pathlib import Path
+        from datetime import datetime
+
+        called_file = Path(__file__).parent.parent.parent / "called.json"
+        try:
+            data = json.loads(called_file.read_text(encoding="utf-8")) if called_file.exists() else {}
+        except Exception:
+            data = {}
+
+        # Ordenar por timestamp desc
+        records = sorted(data.items(), key=lambda x: x[1].get("timestamp", ""), reverse=True)
+
+        # Totais por status
+        counts = {}
+        for _, r in records:
+            s = r.get("status", "?")
+            counts[s] = counts.get(s, 0) + 1
+
+        def fmt_dt(iso):
+            if not iso:
+                return "—"
+            try:
+                dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+                return dt.strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                return iso[:16]
+
+        def fmt_dur(start, end):
+            if not start or not end:
+                return "—"
+            try:
+                s = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                e = datetime.fromisoformat(end.replace("Z", "+00:00"))
+                secs = int((e - s).total_seconds())
+                if secs < 0:
+                    return "—"
+                m, sec = divmod(secs, 60)
+                return f"{m}m{sec:02d}s"
+            except Exception:
+                return "—"
+
+        _status_cfg = {
+            "completed":          ("#22c55e", "#f0fdf4", "Concluída"),
+            "called":             ("#f59e0b", "#fffbeb", "Em curso"),
+            "no_answer_1":        ("#a855f7", "#faf5ff", "Sem resp. (1ª)"),
+            "no_answer_final":    ("#ef4444", "#fef2f2", "Sem resp. final"),
+            "error":              ("#dc2626", "#fef2f2", "Erro"),
+            "already_called_skip":("#6b7280", "#f9fafb", "Ignorado"),
+        }
+
+        def badge(status):
+            color, bg, label = _status_cfg.get(status, ("#6b7280", "#f9fafb", status))
+            return f'<span style="background:{bg};color:{color};border:1px solid {color};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">{label}</span>'
+
+        # Construir linhas da tabela
+        rows_html = ""
+        for checkout_id, r in records:
+            cd = r.get("checkout_data") or {}
+            products = cd.get("products") or []
+            prod_names = "<br>".join(
+                f'<span style="font-size:11px">{p.get("title","?")[:40]}</span>'
+                for p in products[:3]
+            )
+            total = f'{cd.get("total_price","?")}&nbsp;€' if cd else "—"
+            result = r.get("call_result") or {}
+            resultado_html = ""
+            if result:
+                res = result.get("resultado", "")
+                mot = result.get("motivo_principal", "")
+                resultado_html = f'<div style="margin-top:4px;font-size:11px;color:#6b7280">{res} · {mot}</div>'
+
+            has_transcript = bool(r.get("ultravox_call_id"))
+            transcript_btn = (
+                f'<button onclick="openTranscript(\'{checkout_id}\',\'{r.get("name","—")}\',\'{r.get("phone","—")}\')" '
+                f'style="margin-top:6px;background:#3b82f6;color:white;border:none;border-radius:6px;'
+                f'padding:3px 10px;font-size:11px;cursor:pointer">💬 Ver conversa</button>'
+            ) if has_transcript else ""
+
+            rows_html += f"""
+            <tr>
+              <td style="font-family:monospace;font-size:11px;color:#6b7280">{checkout_id}</td>
+              <td><strong>{r.get("name","—")}</strong><br><span style="font-size:11px;color:#6b7280">{r.get("phone","—")}</span></td>
+              <td style="font-size:11px">{cd.get("country_code","?")}</td>
+              <td>{prod_names}</td>
+              <td style="text-align:right;font-weight:600">{total}</td>
+              <td style="font-size:11px">{fmt_dt(cd.get("created_at",""))}</td>
+              <td style="font-size:11px">{fmt_dt(r.get("timestamp",""))}</td>
+              <td style="font-size:11px;text-align:center">{fmt_dur(r.get("timestamp"), r.get("completed_at"))}</td>
+              <td style="text-align:center">{r.get("attempts",1)}</td>
+              <td>{badge(r.get("status","?"))}{resultado_html}{transcript_btn}</td>
+            </tr>"""
+
+        # Cards de resumo
+        summary_cards = ""
+        for status, (color, bg, label) in _status_cfg.items():
+            count = counts.get(status, 0)
+            if count == 0:
+                continue
+            summary_cards += f"""
+            <div style="background:{bg};border:1px solid {color}30;border-radius:8px;padding:12px 20px;min-width:130px">
+              <div style="font-size:11px;color:{color};font-weight:600;text-transform:uppercase">{label}</div>
+              <div style="font-size:28px;font-weight:700;color:{color}">{count}</div>
+            </div>"""
+
+        total_all = len(records)
+        now_str = datetime.utcnow().strftime("%d/%m/%Y %H:%M UTC")
+
+        html = f"""<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Piranha Supplies Voice — Log de Chamadas</title>
+  <style>
+    * {{ box-sizing:border-box; margin:0; padding:0 }}
+    body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:#f8fafc; color:#1e293b; }}
+    .header {{ background:#0f172a; color:white; padding:20px 32px; display:flex; justify-content:space-between; align-items:center }}
+    .header h1 {{ font-size:18px; font-weight:600 }}
+    .header span {{ font-size:12px; color:#94a3b8 }}
+    .container {{ padding:24px 32px }}
+    .summary {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:24px }}
+    .total-card {{ background:white;border:1px solid #e2e8f0;border-radius:8px;padding:12px 20px;min-width:130px }}
+    .total-card .n {{ font-size:28px;font-weight:700;color:#0f172a }}
+    .total-card .l {{ font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase }}
+    table {{ width:100%; border-collapse:collapse; background:white; border-radius:10px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.08) }}
+    th {{ background:#f1f5f9; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#64748b; padding:10px 12px; text-align:left; border-bottom:1px solid #e2e8f0 }}
+    td {{ padding:10px 12px; border-bottom:1px solid #f1f5f9; vertical-align:top }}
+    tr:last-child td {{ border-bottom:none }}
+    tr:hover td {{ background:#f8fafc }}
+    .refresh {{ font-size:11px; color:#64748b; margin-bottom:16px }}
+    a {{ color:#3b82f6; text-decoration:none }}
+  </style>
+  <meta http-equiv="refresh" content="60">
+</head>
+<body>
+  <div class="header">
+    <h1>🦈 Piranha Supplies Voice — Log de Chamadas</h1>
+    <span>Atualizado: {now_str} · auto-refresh 60s</span>
+  </div>
+  <div class="container">
+    <div class="summary">
+      <div class="total-card">
+        <div class="n">{total_all}</div>
+        <div class="l">Total</div>
+      </div>
+      {summary_cards}
+    </div>
+    <p class="refresh">
+      <a href="/admin/calls">⟳ Atualizar agora</a>
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Checkout ID</th>
+          <th>Cliente</th>
+          <th>País</th>
+          <th>Produtos</th>
+          <th style="text-align:right">Total</th>
+          <th>Abandono</th>
+          <th>Chamada</th>
+          <th style="text-align:center">Duração</th>
+          <th style="text-align:center">Tent.</th>
+          <th>Status / Resultado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html if rows_html else '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:40px">Nenhuma chamada registada ainda.</td></tr>'}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- MODAL TRANSCRIÇÃO -->
+  <div id="modal-overlay" onclick="closeModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center"></div>
+  <div id="modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:101;background:white;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(680px,95vw);max-height:85vh;overflow:hidden;flex-direction:column">
+    <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div id="modal-title" style="font-weight:600;font-size:15px"></div>
+        <div id="modal-sub" style="font-size:12px;color:#64748b;margin-top:2px"></div>
+      </div>
+      <button onclick="closeModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#64748b;line-height:1">✕</button>
+    </div>
+    <div id="modal-body" style="overflow-y:auto;padding:20px;flex:1;max-height:calc(85vh - 70px)">
+      <div id="modal-loading" style="text-align:center;padding:40px;color:#94a3b8">A carregar transcrição...</div>
+      <div id="modal-messages" style="display:none;display:flex;flex-direction:column;gap:12px"></div>
+      <div id="modal-error" style="display:none;color:#ef4444;text-align:center;padding:40px"></div>
+    </div>
+  </div>
+
+  <script>
+    function openTranscript(checkoutId, name, phone) {{
+      document.getElementById('modal-title').textContent = name + '  ·  ' + phone;
+      document.getElementById('modal-sub').textContent = 'Checkout #' + checkoutId;
+      document.getElementById('modal-loading').style.display = 'block';
+      document.getElementById('modal-messages').style.display = 'none';
+      document.getElementById('modal-messages').innerHTML = '';
+      document.getElementById('modal-error').style.display = 'none';
+      document.getElementById('modal-overlay').style.display = 'block';
+      document.getElementById('modal').style.display = 'flex';
+
+      fetch('/admin/calls/' + checkoutId + '/transcript')
+        .then(r => r.json())
+        .then(data => {{
+          document.getElementById('modal-loading').style.display = 'none';
+          if (data.error) {{
+            document.getElementById('modal-error').textContent = data.error;
+            document.getElementById('modal-error').style.display = 'block';
+            return;
+          }}
+          const msgs = data.messages || [];
+          if (!msgs.length) {{
+            document.getElementById('modal-error').textContent = 'Sem mensagens na transcrição.';
+            document.getElementById('modal-error').style.display = 'block';
+            return;
+          }}
+          const container = document.getElementById('modal-messages');
+          container.style.display = 'flex';
+          msgs.forEach(m => {{
+            const isAgent = m.role === 'MESSAGE_ROLE_AGENT';
+            const start = m.timespan ? parseFloat(m.timespan.start) : null;
+            const timeStr = start !== null ? formatSecs(start) : '';
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'display:flex;flex-direction:column;align-items:' + (isAgent ? 'flex-start' : 'flex-end');
+            const label = document.createElement('div');
+            label.style.cssText = 'font-size:10px;color:#94a3b8;margin-bottom:3px;padding:0 4px';
+            label.textContent = (isAgent ? '🤖 Bruno' : '👤 Cliente') + (timeStr ? '  ' + timeStr : '');
+            const bubble = document.createElement('div');
+            bubble.style.cssText = 'max-width:85%;padding:10px 14px;border-radius:' +
+              (isAgent ? '4px 16px 16px 16px' : '16px 4px 16px 16px') +
+              ';background:' + (isAgent ? '#eff6ff' : '#f1f5f9') +
+              ';color:' + (isAgent ? '#1e3a8a' : '#1e293b') +
+              ';font-size:13px;line-height:1.5;border:1px solid ' +
+              (isAgent ? '#bfdbfe' : '#e2e8f0');
+            bubble.textContent = m.text.trim();
+            wrap.appendChild(label);
+            wrap.appendChild(bubble);
+            container.appendChild(wrap);
+          }});
+        }})
+        .catch(err => {{
+          document.getElementById('modal-loading').style.display = 'none';
+          document.getElementById('modal-error').textContent = 'Erro: ' + err;
+          document.getElementById('modal-error').style.display = 'block';
+        }});
+    }}
+
+    function closeModal() {{
+      document.getElementById('modal-overlay').style.display = 'none';
+      document.getElementById('modal').style.display = 'none';
+    }}
+
+    function formatSecs(s) {{
+      const m = Math.floor(s / 60);
+      const sec = Math.floor(s % 60);
+      return m + ':' + String(sec).padStart(2, '0');
+    }}
+
+    document.addEventListener('keydown', e => {{ if (e.key === 'Escape') closeModal(); }});
+  </script>
+</body>
+</html>"""
+        return Response(html, mimetype="text/html", status=200)
+
     @app.route("/admin/test-call", methods=["POST"])
     def admin_test_call() -> Response:
         """

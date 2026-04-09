@@ -1,0 +1,12 @@
+# Piranha Supplies Voice — Cron de disparo outbound
+# Instalar na VPS: crontab -e (como root ou user que corre o container)
+#
+# Executa a cada 30 minutos, todos os dias.
+# O próprio script verifica a janela de chamadas (11:00–12:30 e 14:00–17:00, seg–sex Lisboa)
+# e termina imediatamente se estiver fora de janela.
+#
+# Resultado prático:
+#   - Dentro da janela: processa leads elegíveis e dispara ligações
+#   - Fora da janela ou fim de semana: sai sem fazer nada (< 1s)
+
+*/30 * * * * [ "$(date +\%Y-\%m-\%d)" \>= "2026-04-10" ] && docker exec $(docker ps -q -f name=piranha_voice) python src/main.py >> /var/log/piranha-voice/cron.log 2>&1

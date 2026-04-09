@@ -55,23 +55,18 @@ def get_country_timezone(country_code: str) -> str:
 
 def is_calling_hours(country_code: str | None = None) -> bool:
     """
-    Verifica se agora é janela de chamadas no timezone do país de destino.
-    Janelas: seg–sex, 11:00–12:30 e 14:00–17:00 (hora LOCAL do país).
+    Verifica se agora é janela de chamadas no timezone de Lisboa (Europe/Lisbon).
+    Janelas: seg–sex, 11:00–12:30 e 14:00–17:00 (hora de Lisboa).
 
-    Nunca liga para um país fora do seu próprio horário comercial.
-    Exemplos:
-      - Portugal às 11:30 → True para PT
-      - Alemanha: quando PT=10:30, DE=11:30 → True para DE, False para PT
-      - Qualquer país ao sábado ou domingo → False
+    O parâmetro country_code é aceite mas ignorado — todas as chamadas
+    seguem o horário de Portugal independentemente do país do cliente.
 
     Args:
-        country_code: código ISO 3166-1 alpha-2 (ex: "PT", "ES", "DE")
-                      Se None, usa Europe/Lisbon como fallback.
+        country_code: ignorado (mantido para compatibilidade de interface)
     Returns:
-        True se dentro de uma janela de chamada no país de destino
+        True se dentro de uma janela de chamada
     """
-    tz_name = get_country_timezone(country_code) if country_code else _TZ_DEFAULT
-    tz = pytz.timezone(tz_name)
+    tz = pytz.timezone(_TZ_DEFAULT)
     now = datetime.now(tz)
 
     # Só dias úteis (seg=0 … sex=4)

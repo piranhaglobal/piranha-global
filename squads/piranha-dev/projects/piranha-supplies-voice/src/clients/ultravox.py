@@ -222,3 +222,31 @@ class UltravoxClient:
         response = self.session.get(f"{self.BASE_URL}/calls/{call_id}")
         response.raise_for_status()
         return response.json().get("status", "unknown")
+
+    def get_transcript(self, call_id: str) -> list[dict]:
+        """
+        Busca a transcrição completa de uma chamada.
+        Args:
+            call_id: UUID da chamada Ultravox
+        Returns:
+            lista de mensagens ordenadas com role, text e timespan
+        Raises:
+            requests.HTTPError: se a chamada não existir ou API falhar
+        """
+        messages = []
+        url = f"{self.BASE_URL}/calls/{call_id}/messages"
+        while url:
+            response = self.session.get(url)
+            response.raise_for_status()
+            data = response.json()
+            messages.extend(data.get("results", []))
+            url = data.get("next")
+
+        # Filtra apenas mensagens de voz e agente (remove eventos de sistema)
+        relevant = [
+            m for m in messages
+            if m.get("role") in ("MESSAGE_ROLE_AGENT", "MESSAGE_ROLE_USER")
+            and m.get("text", "").strip()
+            and not m.get("text", "").startswith("(New Call)")
+        ]
+        return relevant
