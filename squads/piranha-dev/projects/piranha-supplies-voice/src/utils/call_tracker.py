@@ -33,6 +33,7 @@ def mark(
     ultravox_call_id: str | None = None,
     attempts: int = 1,
     checkout_data: dict | None = None,
+    join_url: str | None = None,
 ) -> None:
     """
     Registra ou atualiza uma ligação no called.json.
@@ -46,6 +47,7 @@ def mark(
         ultravox_call_id: callId Ultravox
         attempts: número da tentativa (1 ou 2)
         checkout_data: dict completo do checkout — necessário para agendar retry
+        join_url: WebSocket URL do Ultravox — guardado para recuperação após reinício
     """
     with _file_lock:
         data = _load()
@@ -56,6 +58,7 @@ def mark(
             "attempts": attempts,
             "provider_call_id": provider_call_id,
             "ultravox_call_id": ultravox_call_id,
+            "join_url": join_url,
             "timestamp": datetime.utcnow().isoformat(),
             "checkout_data": checkout_data,
         }
@@ -136,6 +139,19 @@ def get_retry_due(today_str: str) -> list[dict]:
         ):
             results.append(record["checkout_data"])
     return results
+
+
+def get_join_url_by_provider_id(provider_call_id: str) -> str | None:
+    """
+    Retorna o join_url Ultravox guardado para um dado call_sid Twilio.
+    Usado pelo TwiML handler para recuperar a sessão após reinício do container.
+    """
+    with _file_lock:
+        data = _load()
+    for record in data.values():
+        if record.get("provider_call_id") == provider_call_id:
+            return record.get("join_url")
+    return None
 
 
 def get_record_by_provider_id(provider_call_id: str) -> tuple[str, dict] | None:

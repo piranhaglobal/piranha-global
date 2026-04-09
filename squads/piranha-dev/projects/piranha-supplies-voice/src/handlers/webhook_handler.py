@@ -1,8 +1,14 @@
 """Servidor Flask — recebe eventos Twilio e conecta cliente ao Ultravox via TwiML."""
 
 import threading
+import time
 
 from flask import Flask, Response, jsonify, request
+
+# Transferências pendentes: support_call_sid → {conference_name, safe_summary, base_url, auth}
+# Usado para injetar o contexto após o suporte atender (delay programático)
+_pending_transfers: dict[str, dict] = {}
+_pending_transfers_lock = threading.Lock()
 
 from src.clients.twilio import TwilioClient
 from src.clients.ultravox import TRANSFER_NUMBER
@@ -236,13 +242,21 @@ def create_app() -> Flask:
 
         # Nome único da conferência baseado no call_sid
         conference_name = f"piranha-wt-{call_sid[-10:]}"
-
-        # TwiML para o suporte: ouve o contexto e entra na conferência
         safe_summary = summary.replace("<", "").replace(">", "").replace("&", "e")[:300]
-        support_twiml = (
+
+        # TwiML inicial para o suporte: silêncio enquanto aguarda o contexto vindo do backend
+        # O contexto real é injetado via REST API após 2s (no endpoint /webhook/twilio/support-answer)
+        support_hold_twiml = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             "<Response>"
-            '<Pause length="2"/>'
+            '<Pause length="30"/>'
+            "</Response>"
+        )
+
+        # TwiML de contexto + conferência — injetado após delay de 2s
+        support_context_twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<Response>"
             f'<Say voice="alice" language="pt-PT">'
             f"Piranha Supplies. Transferência com contexto. {safe_summary}"
             f"</Say>"
@@ -263,15 +277,19 @@ def create_app() -> Flask:
         )
 
         twilio = TwilioClient()
+        status_callback_url = f"{Config.VPS_BASE_URL}/webhook/twilio/support-answer"
 
-        # 1. Ligar ao suporte com contexto → ele inicia a conferência
+        # 1. Ligar ao suporte com TwiML de espera + StatusCallback para quando atender
         try:
             resp = twilio.session.post(
                 f"{twilio.base_url}/Accounts/{twilio.account_sid}/Calls.json",
                 data={
                     "To": TRANSFER_NUMBER,
                     "From": Config.TWILIO_FROM_NUMBER,
-                    "Twiml": support_twiml,
+                    "Twiml": support_hold_twiml,
+                    "StatusCallback": status_callback_url,
+                    "StatusCallbackEvent": "answered",
+                    "StatusCallbackMethod": "POST",
                 },
                 auth=twilio.auth,
             )
@@ -281,6 +299,16 @@ def create_app() -> Flask:
         except Exception as e:
             logger.error(f"Warm transfer: erro ao ligar suporte: {e}")
             return jsonify({"error": "falha ao contactar suporte"}), 500
+
+        # Guardar contexto para injetar quando o suporte atender
+        with _pending_transfers_lock:
+            _pending_transfers[support_sid] = {
+                "conference_name": conference_name,
+                "context_twiml": support_context_twiml,
+                "base_url": twilio.base_url,
+                "account_sid": twilio.account_sid,
+                "auth": twilio.auth,
+            }
 
         # 2. Redirecionar o cliente para a conferência
         try:
@@ -296,6 +324,47 @@ def create_app() -> Flask:
             return jsonify({"error": "falha ao transferir cliente"}), 500
 
         return jsonify({"status": "transferência iniciada", "conference": conference_name}), 200
+
+    @app.route("/webhook/twilio/support-answer", methods=["POST"])
+    def support_answer() -> Response:
+        """
+        Recebe o StatusCallback do Twilio quando o suporte atende a chamada.
+        Aguarda 2 segundos e injeta o contexto + redireciona para conferência.
+        O delay é programático (thread) — garante que a pessoa tem tempo
+        de colocar o telefone no ouvido antes de ouvir o briefing.
+        """
+        call_sid = request.form.get("CallSid", "")
+        call_status = request.form.get("CallStatus", "")
+
+        if call_status != "in-progress":
+            return ("", 204)
+
+        with _pending_transfers_lock:
+            transfer = _pending_transfers.pop(call_sid, None)
+
+        if not transfer:
+            logger.warning(f"support-answer: sem transferência pendente para sid={call_sid}")
+            return ("", 204)
+
+        logger.info(f"Warm transfer: suporte atendeu | sid={call_sid} | a aguardar 2s antes do contexto")
+
+        def _inject_context():
+            time.sleep(2)
+            try:
+                import requests as _req
+                r = _req.post(
+                    f"{transfer['base_url']}/Accounts/{transfer['account_sid']}/Calls/{call_sid}.json",
+                    data={"Twiml": transfer["context_twiml"]},
+                    auth=transfer["auth"],
+                    timeout=10,
+                )
+                r.raise_for_status()
+                logger.info(f"Warm transfer: contexto injetado após 2s | sid={call_sid} | conf={transfer['conference_name']}")
+            except Exception as e:
+                logger.error(f"Warm transfer: erro ao injetar contexto | sid={call_sid} | {e}")
+
+        threading.Thread(target=_inject_context, daemon=True).start()
+        return ("", 204)
 
     @app.route("/webhook/log-call-result", methods=["POST"])
     def log_call_result() -> Response:
