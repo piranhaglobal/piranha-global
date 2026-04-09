@@ -10,6 +10,7 @@ from src.utils import call_tracker
 from src.utils.language_detector import get_language, get_ultravox_hint, get_voice_for_language
 from src.utils.logger import setup_logger
 from src.utils.product_formatter import format_products_for_voice
+from src.utils.voice_expander import expand_for_voice
 from src.utils.schedule_checker import is_calling_hours
 
 logger = setup_logger(__name__)
@@ -133,6 +134,118 @@ def _format_days(date_str: str, language: str) -> str:
 def _format_products(products: list[dict], language: str = "pt") -> str:
     """Converte produtos em descrição natural para voz no idioma indicado."""
     return format_products_for_voice(products, language)
+
+
+def _format_breakdown(checkout: dict, language: str = "pt") -> str:
+    """
+    Formata o detalhe do valor total (produto + envio + IVA) para o system prompt.
+    Evita que o agente invente quantidades ao explicar diferenças de preço.
+    """
+    try:
+        subtotal = float(checkout.get("subtotal_price", 0) or 0)
+        total = float(checkout.get("total_price", 0) or 0)
+        shipping = sum(
+            float(s.get("price", 0) or 0)
+            for s in checkout.get("shipping_lines", [])
+        )
+        tax = total - subtotal - shipping
+        if tax < 0:
+            tax = float(checkout.get("total_tax", 0) or 0)
+
+        _labels = {
+            "pt": ("Produto(s)", "Portes de envio", "IVA estimado", "Total"),
+            "es": ("Producto(s)", "Gastos de envío", "IVA estimado", "Total"),
+            "fr": ("Produit(s)", "Frais de livraison", "TVA estimée", "Total"),
+            "en": ("Product(s)", "Shipping", "Estimated VAT", "Total"),
+        }
+        lbl = _labels.get(language, _labels["pt"])
+
+        parts = [f"{lbl[0]}: {subtotal:.2f}€"]
+        if shipping > 0:
+            parts.append(f"{lbl[1]}: {shipping:.2f}€")
+        if tax > 0.01:
+            parts.append(f"{lbl[2]}: {tax:.2f}€")
+        parts.append(f"{lbl[3]}: {total:.2f}€")
+        return " | ".join(parts)
+    except (ValueError, TypeError):
+        return ""
+
+
+def _format_product_details(products: list[dict], language: str = "pt") -> str:
+    """
+    Constrói o bloco de conhecimento detalhado dos produtos para o system prompt.
+    Inclui nome exacto e descrição técnica de cada produto no carrinho.
+
+    Args:
+        products: lista de dicts com 'title', 'price' e opcionalmente 'description'
+        language: idioma do agente (para labels)
+
+    Returns:
+        bloco de texto formatado para inserção em {{productDetails}}
+    """
+    if not products:
+        return "(sem produtos no carrinho)"
+
+    _labels = {
+        "pt": {"product": "PRODUTO", "name": "Nome exacto", "price": "Preço", "desc": "Descrição"},
+        "es": {"product": "PRODUCTO", "name": "Nombre exacto", "price": "Precio", "desc": "Descripción"},
+        "fr": {"product": "PRODUIT", "name": "Nom exact", "price": "Prix", "desc": "Description"},
+        "en": {"product": "PRODUCT", "name": "Exact name", "price": "Price", "desc": "Description"},
+    }
+    labels = _labels.get(language, _labels["pt"])
+
+    _faq_labels = {
+        "pt": {"details": "Especificações", "faqs": "Perguntas Frequentes", "q": "P", "a": "R"},
+        "es": {"details": "Especificaciones", "faqs": "Preguntas Frecuentes", "q": "P", "a": "R"},
+        "fr": {"details": "Spécifications", "faqs": "Questions Fréquentes", "q": "Q", "a": "R"},
+        "en": {"details": "Specifications", "faqs": "Frequently Asked Questions", "q": "Q", "a": "A"},
+    }
+    fl = _faq_labels.get(language, _faq_labels["pt"])
+
+    lines = []
+    for i, p in enumerate(products, 1):
+        title = p.get("title", "").strip()
+        price = p.get("price", "").strip()
+        raw_description = p.get("description", "").strip()
+        raw_details = p.get("product_details", "").strip()
+        faqs = p.get("faqs", [])
+
+        description = expand_for_voice(raw_description, language) if raw_description else ""
+        product_details = expand_for_voice(raw_details, language) if raw_details else ""
+        # url é mantida na estrutura de dados e no called.json para features
+        # pós-chamada (ex: follow-up WhatsApp/SMS), mas nunca incluída no
+        # prompt de voz — o agente não deve verbalizar URLs em chamada.
+
+        if not title:
+            continue
+
+        block = [f"{labels['product']} {i} — {title}"]
+        block.append(f"{labels['name']}: {title}")
+        if price:
+            block.append(f"{labels['price']}: {price}€")
+        if description:
+            block.append(f"{labels['desc']}: {description}")
+        else:
+            no_desc = {"pt": "(sem descrição disponível)", "es": "(sin descripción disponible)",
+                       "fr": "(sans description disponible)", "en": "(no description available)"}
+            block.append(f"{labels['desc']}: {no_desc.get(language, '(sem descrição disponível)')}")
+
+        if product_details:
+            block.append(f"\n{fl['details']}:\n{product_details}")
+
+        if faqs:
+            faq_lines = [f"\n{fl['faqs']}:"]
+            for faq in faqs:
+                q = faq.get("question", "").strip()
+                a = faq.get("answer", "").strip()
+                if q and a:
+                    faq_lines.append(f"{fl['q']}: {q}")
+                    faq_lines.append(f"{fl['a']}: {a}")
+            block.append("\n".join(faq_lines))
+
+        lines.append("\n".join(block))
+
+    return "\n\n".join(lines)
 
 
 # --- Lógica principal ---
@@ -260,6 +373,7 @@ def process_single(checkout: dict, call_done: threading.Event) -> str:
             checkout_id, phone, checkout["name"], "called",
             call_sid, ultravox_call_id,
             attempts=attempts, checkout_data=checkout,
+            join_url=join_url,
         )
 
         logger.info(
@@ -287,8 +401,10 @@ def _build_call_context(checkout: dict) -> dict:
         lead_name=checkout["name"],
         cart_products=_format_products(checkout["products"], language),
         cart_value=_format_value(checkout["total_price"], language),
+        cart_breakdown=_format_breakdown(checkout, language),
         abandon_date=_format_date(created_at, language),
         days_since_abandon=_format_days(created_at, language),
+        product_details=_format_product_details(checkout["products"], language),
         language=language,
     )
 

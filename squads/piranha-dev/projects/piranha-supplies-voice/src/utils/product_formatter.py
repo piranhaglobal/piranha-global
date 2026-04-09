@@ -22,6 +22,19 @@ _CAT_POWER     = "power"
 _CAT_ACCESSORIES = "accessories"
 _CAT_FURNITURE = "furniture"
 
+# Sub-tipos de descartáveis — usados para dar nome específico ao produto.
+# Ordem crítica: "avental"/"apron" ANTES de "glove" para evitar que títulos
+# do tipo "Avental Descartável Unigloves" sejam apanhados pelo substring
+# "glove" dentro de "unigloves".
+_DISPOSABLE_SUBTYPES: list[tuple[list[str], dict[str, str]]] = [
+    (["avental", "apron"],{"pt": "avental descartável",  "es": "delantal desechable",  "fr": "tablier jetable",    "en": "disposable apron"}),
+    (["luva", "glove"],   {"pt": "luvas descartáveis",   "es": "guantes desechables",  "fr": "gants jetables",     "en": "disposable gloves"}),
+    (["máscara", "mask"], {"pt": "máscaras descartáveis","es": "mascarillas",           "fr": "masques jetables",   "en": "disposable masks"}),
+    (["wrap", "cover"],   {"pt": "película protetora",   "es": "film protector",        "fr": "film protecteur",    "en": "protective wrap"}),
+    (["barrier"],         {"pt": "película protetora",   "es": "barrera protectora",    "fr": "barrière protectrice","en": "barrier film"}),
+    (["sleeve"],          {"pt": "capas protetoras",     "es": "fundas protectoras",    "fr": "housses protectrices","en": "protective sleeves"}),
+]
+
 # ---------------------------------------------------------------------------
 # Mapeamento de categorias por palavras-chave no título
 # ---------------------------------------------------------------------------
@@ -47,7 +60,7 @@ _CATEGORIAS: list[tuple[str, list[str]]] = [
         "kuro sumi", "panthera", "solid ink",
     ]),
     (_CAT_PIERCING,   ["piercing", "jewelry", "jewellery", "joia", "implant", "barbell", "ring"]),
-    (_CAT_DISPOSABLE, ["glove", "luva", "mask", "máscara", "barrier", "clip cord", "cover", "sleeve"]),
+    (_CAT_DISPOSABLE, ["glove", "luva", "mask", "máscara", "barrier", "clip cord", "cover", "sleeve", "wrap", "avental", "apron", "descartável", "descartáveis", "disposable"]),
     (_CAT_SKINCARE,   ["butter", "balm", "lotion", "cream", "soap", "sabão", "aftercare", "healing", "hustle"]),
     (_CAT_STENCIL,    ["stencil", "transfer", "thermal", "freehand", "spirit"]),
     (_CAT_POWER,      ["power supply", "fonte", "power unit"]),
@@ -194,6 +207,12 @@ _CATEGORIA_POR_MARCA: dict[str, str] = {
     "Spirit": _CAT_STENCIL,
     "Clear Cut Stencils": _CAT_STENCIL,
     "InkJet Stencils": _CAT_STENCIL,
+    # Descartáveis — luvas, máscaras, aventais
+    "Unigloves": _CAT_DISPOSABLE,
+    "Unistar": _CAT_DISPOSABLE,
+    "Maimed": _CAT_DISPOSABLE,
+    "Kai Medical": _CAT_DISPOSABLE,
+    "AP Medical": _CAT_DISPOSABLE,
 }
 
 # ---------------------------------------------------------------------------
@@ -236,12 +255,19 @@ _MARCAS_LOWER: dict[str, str] = {m.lower(): m for m in _MARCAS}
 
 
 def _identificar_categoria(titulo: str) -> str | None:
-    """Devolve a chave interna de categoria com base em palavras-chave no título."""
+    """Devolve a chave interna de categoria com base em palavras-chave no título.
+    Keywords curtas (≤3 chars) usam word boundary para evitar falsos positivos
+    (ex: "rm" em "perma", "cm" em "curved", "rs" em "first").
+    """
     titulo_lower = titulo.lower()
     for categoria, keywords in _CATEGORIAS:
         for kw in keywords:
-            if kw in titulo_lower:
-                return categoria
+            if len(kw) <= 3:
+                if re.search(r"\b" + re.escape(kw) + r"\b", titulo_lower):
+                    return categoria
+            else:
+                if kw in titulo_lower:
+                    return categoria
     return None
 
 
@@ -283,7 +309,31 @@ def _formatar_produto(titulo: str, vendor: str = "", language: str = "pt") -> st
     if not cat_key and marca:
         cat_key = _CATEGORIA_POR_MARCA.get(marca)
 
-    categoria = traducoes.get(cat_key, "") if cat_key else ""
+    # Para descartáveis, usar sub-tipo específico (luvas, máscaras, etc.).
+    # Estratégia em dois passos para evitar falsos positivos do substring
+    # "glove" dentro da marca "Unigloves" quando o produto é um avental:
+    #   1.º pass: verifica APENAS o título (mais específico).
+    #   2.º pass: verifica título + vendor — cobre títulos abreviados
+    #             (ex: "Black Pearl M" com vendor "Unigloves" → luvas).
+    if cat_key == _CAT_DISPOSABLE:
+        titulo_lower = titulo.lower()
+        vendor_lower = vendor.lower()
+        categoria = traducoes.get(cat_key, "")
+
+        # Pass 1 — subtipo pelo título
+        for keywords, labels in _DISPOSABLE_SUBTYPES:
+            if any(kw in titulo_lower for kw in keywords):
+                categoria = labels.get(lang, labels["pt"])
+                break
+        else:
+            # Pass 2 — título não foi conclusivo: adiciona vendor ao texto
+            check_text = titulo_lower + " " + vendor_lower
+            for keywords, labels in _DISPOSABLE_SUBTYPES:
+                if any(kw in check_text for kw in keywords):
+                    categoria = labels.get(lang, labels["pt"])
+                    break
+    else:
+        categoria = traducoes.get(cat_key, "") if cat_key else ""
 
     if categoria and marca:
         return f"{categoria} {prep} {marca}"

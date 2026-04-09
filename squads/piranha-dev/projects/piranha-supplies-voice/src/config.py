@@ -8,7 +8,8 @@ load_dotenv()
 
 class Config:
     # Shopify
-    SHOPIFY_STORE_URL: str = os.getenv("SHOPIFY_STORE_URL", "")
+    SHOPIFY_STORE_URL: str = os.getenv("SHOPIFY_STORE_URL", "")          # myshopify.com (API)
+    SHOPIFY_STOREFRONT_URL: str = os.getenv("SHOPIFY_STOREFRONT_URL", "") # domínio público (FAQs/scraping)
     SHOPIFY_ACCESS_TOKEN: str = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
     SHOPIFY_API_VERSION: str = os.getenv("SHOPIFY_API_VERSION", "2024-10")
 

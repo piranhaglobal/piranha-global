@@ -1,5 +1,6 @@
 """Cliente Shopify — busca checkouts abandonados do 8º dia."""
 
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -122,14 +123,21 @@ class ShopifyClient:
             or ""
         ).strip()
 
-        products = [
-            {
+        products = []
+        for item in checkout.get("line_items", []):
+            product_id = item.get("product_id")
+            product_info = self._get_product_info(product_id) if product_id else {
+                "description": "", "url": "", "product_details": "", "faqs": [],
+            }
+            products.append({
                 "title": item.get("title", ""),
                 "vendor": item.get("vendor", ""),
                 "price": item.get("price", ""),
-            }
-            for item in checkout.get("line_items", [])
-        ]
+                "url": product_info["url"],
+                "description": product_info["description"],
+                "product_details": product_info.get("product_details", ""),
+                "faqs": product_info.get("faqs", []),
+            })
 
         country_code = (
             shipping.get("country_code")
@@ -144,8 +152,128 @@ class ShopifyClient:
             "country_code": country_code,
             "products": products,
             "total_price": checkout.get("total_price", ""),
+            "subtotal_price": checkout.get("subtotal_price", ""),
+            "shipping_lines": checkout.get("shipping_lines", []),
+            "total_tax": checkout.get("total_tax", ""),
             "created_at": checkout.get("created_at", ""),
         }
+
+    def _get_product_info(self, product_id: int | str, max_chars: int = 400) -> dict:
+        """
+        Busca descrição, detalhes e FAQs de um produto Shopify pelo seu ID.
+        Args:
+            product_id: ID do produto Shopify
+            max_chars: número máximo de caracteres da descrição principal
+        Returns:
+            dict com "description", "product_details", "faqs" (list[dict]) e "url"
+        """
+        try:
+            data = self._make_request("GET", f"/products/{product_id}.json")
+            product = data.get("product", {})
+            body_html = product.get("body_html", "") or ""
+            handle = product.get("handle", "") or ""
+            # Usar domínio público da loja para URLs (FAQs/scraping)
+            # SHOPIFY_STOREFRONT_URL tem prioridade; fallback: derivar do myshopify handle
+            storefront = (
+                Config.SHOPIFY_STOREFRONT_URL.strip().rstrip("/")
+                or "https://" + Config.SHOPIFY_STORE_URL.replace(".myshopify.com", ".com").split("/")[0]
+            )
+            if not storefront.startswith("http"):
+                storefront = "https://" + storefront
+            url = f"{storefront}/products/{handle}" if handle else ""
+
+            product_details = self._get_product_details_metafield(product_id)
+            faqs = self._get_product_faqs(url) if url else []
+
+            return {
+                "description": self._clean_html(body_html, max_chars),
+                "product_details": product_details,
+                "faqs": faqs,
+                "url": url,
+            }
+        except Exception as e:
+            logger.warning(f"Não foi possível obter informação do produto {product_id}: {e}")
+            return {"description": "", "product_details": "", "faqs": [], "url": ""}
+
+    def _get_product_details_metafield(self, product_id: int | str, max_chars: int = 600) -> str:
+        """
+        Busca o metafield info.longdescription de um produto (features/especificações).
+        Args:
+            product_id: ID do produto Shopify
+            max_chars: limite de caracteres do texto extraído
+        Returns:
+            texto limpo das especificações, ou "" se não disponível
+        """
+        try:
+            data = self._make_request(
+                "GET", f"/products/{product_id}/metafields.json",
+                params={"namespace": "info", "key": "longdescription"},
+            )
+            metafields = data.get("metafields", [])
+            if not metafields:
+                return ""
+            raw = metafields[0].get("value", "") or ""
+            return self._clean_html(raw, max_chars)
+        except Exception as e:
+            logger.warning(f"Não foi possível obter metafield longdescription do produto {product_id}: {e}")
+            return ""
+
+    def _get_product_faqs(self, product_url: str, max_faqs: int = 20) -> list[dict]:
+        """
+        Extrai FAQs da página pública do produto (divs com class 'question').
+        Remove duplicados (o tema renderiza blocos mobile + desktop).
+        Args:
+            product_url: URL completa do produto na loja
+            max_faqs: número máximo de FAQs únicas a retornar
+        Returns:
+            lista de dicts com "question" e "answer", sem duplicados
+        """
+        try:
+            resp = self.session.get(
+                product_url,
+                headers={"Accept": "text/html"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            html = resp.text
+
+            # Cada FAQ está num div.question: texto direto = pergunta, div.metafield-rich_text_field = resposta
+            faq_blocks = re.findall(
+                r'class="[^"]*question[^"]*"[^>]*>\s*(.*?)\s*<div class="metafield-rich_text_field">(.*?)</div>',
+                html,
+                re.DOTALL,
+            )
+            faqs: list[dict] = []
+            seen_questions: set[str] = set()
+            for question_raw, answer_raw in faq_blocks:
+                question = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", question_raw)).strip()
+                answer = self._clean_html(answer_raw, 400)
+                if question and answer and question not in seen_questions:
+                    seen_questions.add(question)
+                    faqs.append({"question": question, "answer": answer})
+                if len(faqs) >= max_faqs:
+                    break
+
+            logger.info(f"FAQs extraídas para {product_url}: {len(faqs)} únicas")
+            return faqs
+        except Exception as e:
+            logger.warning(f"Não foi possível extrair FAQs de {product_url}: {e}")
+            return []
+
+    @staticmethod
+    def _clean_html(html: str, max_chars: int = 400) -> str:
+        """Remove tags HTML e normaliza espaços para uso em prompt de voz."""
+        if not html:
+            return ""
+        text = re.sub(r"<[^>]+>", " ", html)
+        text = re.sub(r"&nbsp;", " ", text)
+        text = re.sub(r"&amp;", "&", text)
+        text = re.sub(r"&lt;", "<", text)
+        text = re.sub(r"&gt;", ">", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(text) > max_chars:
+            text = text[:max_chars].rsplit(" ", 1)[0] + "..."
+        return text
 
     def _make_request(
         self,
