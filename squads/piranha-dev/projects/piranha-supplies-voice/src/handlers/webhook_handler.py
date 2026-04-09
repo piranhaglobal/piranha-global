@@ -242,6 +242,7 @@ def create_app() -> Flask:
         support_twiml = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             "<Response>"
+            '<Pause length="2"/>'
             f'<Say voice="alice" language="pt-PT">'
             f"Piranha Supplies. Transferência com contexto. {safe_summary}"
             f"</Say>"
