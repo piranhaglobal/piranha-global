@@ -319,8 +319,11 @@ def _process_lead_list(checkouts: list[dict], is_retry: bool) -> None:
 
         if status == "called":
             logger.info("A aguardar fim da ligação antes de avançar...")
-            call_done.wait()
-            logger.info("Ligação terminada. A avançar para o próximo lead.")
+            finished = call_done.wait(timeout=360)  # máx. 6 min por chamada
+            if not finished:
+                logger.warning(f"Timeout a aguardar fim da ligação — checkout {checkout['id']}. A avançar.")
+            else:
+                logger.info("Ligação terminada. A avançar para o próximo lead.")
 
 
 def process_single(checkout: dict, call_done: threading.Event) -> str:

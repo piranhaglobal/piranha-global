@@ -51,6 +51,10 @@ class TwilioClient:
             ("StatusCallbackMethod", "POST"),
             ("StatusCallbackEvent", "answered"),
             ("StatusCallbackEvent", "completed"),
+            ("StatusCallbackEvent", "no-answer"),
+            ("StatusCallbackEvent", "busy"),
+            ("StatusCallbackEvent", "failed"),
+            ("StatusCallbackEvent", "canceled"),
         ]
 
         response = self.session.post(
