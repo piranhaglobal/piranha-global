@@ -218,28 +218,39 @@ def create_app() -> Flask:
             color, bg, label = _status_cfg.get(status, ("#6b7280", "#f9fafb", status))
             return f'<span style="background:{bg};color:{color};border:1px solid {color};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600">{label}</span>'
 
-        # Construir linhas da tabela
+        # Construir linhas da tabela + cards mobile
         rows_html = ""
+        cards_html = ""
         for checkout_id, r in records:
             cd = r.get("checkout_data") or {}
             products = cd.get("products") or []
-            prod_names = "<br>".join(
+            prod_names_table = "<br>".join(
                 f'<span style="font-size:11px">{p.get("title","?")[:40]}</span>'
                 for p in products[:3]
             )
+            prod_names_card = ", ".join(p.get("title","?")[:30] for p in products[:2])
+            if len(products) > 2:
+                prod_names_card += f" +{len(products)-2}"
             total = f'{cd.get("total_price","?")}&nbsp;€' if cd else "—"
             result = r.get("call_result") or {}
             resultado_html = ""
+            resultado_card = ""
             if result:
                 res = result.get("resultado", "")
                 mot = result.get("motivo_principal", "")
                 resultado_html = f'<div style="margin-top:4px;font-size:11px;color:#6b7280">{res} · {mot}</div>'
+                resultado_card = f'<div style="font-size:11px;color:#6b7280;margin-top:4px">{res} · {mot}</div>'
 
             has_transcript = bool(r.get("ultravox_call_id"))
-            transcript_btn = (
+            transcript_btn_table = (
                 f'<button onclick="openTranscript(\'{checkout_id}\',\'{r.get("name","—")}\',\'{r.get("phone","—")}\')" '
                 f'style="margin-top:6px;background:#3b82f6;color:white;border:none;border-radius:6px;'
                 f'padding:3px 10px;font-size:11px;cursor:pointer">💬 Ver conversa</button>'
+            ) if has_transcript else ""
+            transcript_btn_card = (
+                f'<button onclick="openTranscript(\'{checkout_id}\',\'{r.get("name","—")}\',\'{r.get("phone","—")}\')" '
+                f'style="width:100%;margin-top:10px;background:#3b82f6;color:white;border:none;border-radius:8px;'
+                f'padding:9px;font-size:13px;font-weight:600;cursor:pointer;letter-spacing:.01em">💬 Ver conversa</button>'
             ) if has_transcript else ""
 
             rows_html += f"""
@@ -247,14 +258,34 @@ def create_app() -> Flask:
               <td style="font-family:monospace;font-size:11px;color:#6b7280">{checkout_id}</td>
               <td><strong>{r.get("name","—")}</strong><br><span style="font-size:11px;color:#6b7280">{r.get("phone","—")}</span></td>
               <td style="font-size:11px">{cd.get("country_code","?")}</td>
-              <td>{prod_names}</td>
+              <td>{prod_names_table}</td>
               <td style="text-align:right;font-weight:600">{total}</td>
               <td style="font-size:11px">{fmt_dt(cd.get("created_at",""))}</td>
               <td style="font-size:11px">{fmt_dt(r.get("timestamp",""))}</td>
               <td style="font-size:11px;text-align:center">{fmt_dur(r.get("timestamp"), r.get("completed_at"))}</td>
               <td style="text-align:center">{r.get("attempts",1)}</td>
-              <td>{badge(r.get("status","?"))}{resultado_html}{transcript_btn}</td>
+              <td>{badge(r.get("status","?"))}{resultado_html}{transcript_btn_table}</td>
             </tr>"""
+
+            cards_html += f"""
+            <div class="card">
+              <div class="card-top">
+                <div>
+                  <div class="card-name">{r.get("name","—")}</div>
+                  <div class="card-phone">{r.get("phone","—")} &nbsp;·&nbsp; {cd.get("country_code","?")}</div>
+                </div>
+                <div>{badge(r.get("status","?"))}</div>
+              </div>
+              <div class="card-products">{prod_names_card or "—"}</div>
+              {resultado_card}
+              <div class="card-meta">
+                <div><span class="meta-label">Total</span><span class="meta-val">{total}</span></div>
+                <div><span class="meta-label">Chamada</span><span class="meta-val">{fmt_dt(r.get("timestamp",""))}</span></div>
+                <div><span class="meta-label">Duração</span><span class="meta-val">{fmt_dur(r.get("timestamp"), r.get("completed_at"))}</span></div>
+                <div><span class="meta-label">Tentativas</span><span class="meta-val">{r.get("attempts",1)}</span></div>
+              </div>
+              {transcript_btn_card}
+            </div>"""
 
         # Cards de resumo
         summary_cards = ""
@@ -280,21 +311,51 @@ def create_app() -> Flask:
   <style>
     * {{ box-sizing:border-box; margin:0; padding:0 }}
     body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:#f8fafc; color:#1e293b; }}
-    .header {{ background:#0f172a; color:white; padding:20px 32px; display:flex; justify-content:space-between; align-items:center }}
-    .header h1 {{ font-size:18px; font-weight:600 }}
-    .header span {{ font-size:12px; color:#94a3b8 }}
-    .container {{ padding:24px 32px }}
-    .summary {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:24px }}
-    .total-card {{ background:white;border:1px solid #e2e8f0;border-radius:8px;padding:12px 20px;min-width:130px }}
-    .total-card .n {{ font-size:28px;font-weight:700;color:#0f172a }}
-    .total-card .l {{ font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase }}
+
+    /* ── Header ── */
+    .header {{ background:#0f172a; color:white; padding:16px 24px; display:flex; justify-content:space-between; align-items:center; gap:12px }}
+    .header h1 {{ font-size:17px; font-weight:600; display:flex; align-items:center; gap:8px }}
+    .header-sub {{ font-size:11px; color:#94a3b8; white-space:nowrap }}
+
+    /* ── Layout ── */
+    .container {{ padding:20px 24px }}
+    .summary {{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px }}
+    .total-card {{ background:white;border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;min-width:110px }}
+    .total-card .n {{ font-size:26px;font-weight:700;color:#0f172a }}
+    .total-card .l {{ font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase }}
+    a {{ color:#3b82f6; text-decoration:none }}
+
+    /* ── Desktop table ── */
+    .desktop-table {{ display:block }}
     table {{ width:100%; border-collapse:collapse; background:white; border-radius:10px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.08) }}
     th {{ background:#f1f5f9; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:#64748b; padding:10px 12px; text-align:left; border-bottom:1px solid #e2e8f0 }}
     td {{ padding:10px 12px; border-bottom:1px solid #f1f5f9; vertical-align:top }}
     tr:last-child td {{ border-bottom:none }}
     tr:hover td {{ background:#f8fafc }}
-    .refresh {{ font-size:11px; color:#64748b; margin-bottom:16px }}
-    a {{ color:#3b82f6; text-decoration:none }}
+
+    /* ── Mobile cards ── */
+    .mobile-cards {{ display:none; flex-direction:column; gap:12px }}
+    .card {{ background:white; border-radius:12px; padding:14px 16px; box-shadow:0 1px 4px rgba(0,0,0,.08); border:1px solid #e2e8f0 }}
+    .card-top {{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:8px }}
+    .card-name {{ font-size:15px; font-weight:700; color:#0f172a }}
+    .card-phone {{ font-size:12px; color:#64748b; margin-top:2px }}
+    .card-products {{ font-size:12px; color:#475569; margin-bottom:6px; line-height:1.4 }}
+    .card-meta {{ display:grid; grid-template-columns:1fr 1fr; gap:6px 12px; margin-top:10px; padding-top:10px; border-top:1px solid #f1f5f9 }}
+    .meta-label {{ font-size:10px; color:#94a3b8; font-weight:600; text-transform:uppercase; display:block }}
+    .meta-val {{ font-size:13px; font-weight:600; color:#1e293b; display:block }}
+
+    /* ── Responsive ── */
+    @media (max-width: 767px) {{
+      .header {{ padding:12px 16px }}
+      .header h1 {{ font-size:15px }}
+      .header-sub {{ display:none }}
+      .container {{ padding:14px 12px }}
+      .summary {{ gap:8px }}
+      .total-card {{ padding:8px 12px; min-width:90px; flex:1 }}
+      .total-card .n {{ font-size:22px }}
+      .desktop-table {{ display:none }}
+      .mobile-cards {{ display:flex }}
+    }}
   </style>
   <meta http-equiv="refresh" content="60">
 </head>
@@ -314,6 +375,7 @@ def create_app() -> Flask:
     <p class="refresh">
       <a href="/admin/calls">⟳ Atualizar agora</a>
     </p>
+    <div class="desktop-table">
     <table>
       <thead>
         <tr>
@@ -333,6 +395,10 @@ def create_app() -> Flask:
         {rows_html if rows_html else '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:40px">Nenhuma chamada registada ainda.</td></tr>'}
       </tbody>
     </table>
+    </div>
+    <div class="mobile-cards">
+      {cards_html}
+    </div>
   </div>
 
   <!-- MODAL TRANSCRIÇÃO -->
