@@ -167,6 +167,19 @@ def get_record_by_provider_id(provider_call_id: str) -> tuple[str, dict] | None:
     return None
 
 
+def get_record_by_ultravox_id(ultravox_call_id: str) -> tuple[str, dict] | None:
+    """
+    Retorna (checkout_id, record) para um dado ultravox_call_id.
+    Usado como fallback quando o call_sid Twilio não está disponível.
+    """
+    with _file_lock:
+        data = _load()
+    for checkout_id, record in data.items():
+        if record.get("ultravox_call_id") == ultravox_call_id:
+            return checkout_id, record
+    return None
+
+
 def get_attempts(checkout_id: str) -> int:
     """Retorna o número de tentativas já realizadas para este checkout."""
     with _file_lock:

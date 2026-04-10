@@ -145,7 +145,7 @@ Usa-os EXCLUSIVAMENTE na Fase 4C. Nunca os lês em voz alta na íntegra.
 
 Ninguém atende após tocar: usa logCallResult com estado "sem_contacto", usa hangUp.
 Voicemail confirmado (ouviste claramente a gravação automática, bip, ou frase tipo
-"deixe a sua mensagem"): usa hangUp imediatamente. Nunca deixes mensagem de voz.
+"deixe a sua mensagem"): usa logCallResult com resultado="sem_contacto" e motivo_principal="outro", depois usa hangUp. Nunca deixes mensagem de voz.
 Em caso de dúvida entre voz humana e gravação automática: avança sempre para Fase 2.
 
 ---
@@ -672,7 +672,7 @@ Los datos de abajo son tu fuente de verdad sobre los productos de esta llamada.
 
 Nadie atiende después de sonar: usa logCallResult con estado "sem_contacto", usa hangUp.
 Buzón de voz confirmado (has escuchado claramente la grabación automática, el pitido, o una
-frase tipo "deje su mensaje"): usa hangUp inmediatamente. Nunca dejes mensaje de voz.
+frase tipo "deje su mensaje"): usa logCallResult con resultado="sem_contacto" y motivo_principal="otro", después usa hangUp. Nunca dejes mensaje de voz.
 En caso de duda entre voz humana y grabación automática: avanza siempre a la Fase 2.
 
 ---
@@ -1182,7 +1182,7 @@ Jours depuis cette date : {{daysSinceAbandon}}
 
 Personne ne répond après avoir sonné : utilise logCallResult avec l'état "sem_contacto", utilise hangUp.
 Messagerie vocale confirmée (tu as clairement entendu l'enregistrement automatique, le bip, ou une
-phrase du type "laissez votre message") : utilise hangUp immédiatement. Ne laisse jamais de message vocal.
+phrase du type "laissez votre message") : utilise logCallResult avec resultado="sem_contacto" et motivo_principal="outro", puis utilise hangUp. Ne laisse jamais de message vocal.
 En cas de doute entre voix humaine et enregistrement automatique : avance toujours vers la Phase 2.
 
 ---
@@ -1605,7 +1605,7 @@ Days since that date: {{daysSinceAbandon}}
 
 No answer after ringing: use logCallResult with state "sem_contacto", use hangUp.
 Voicemail confirmed (you have clearly heard the automated recording, beep, or a phrase like
-"please leave a message"): use hangUp immediately. Never leave a voicemail.
+"please leave a message"): use logCallResult with resultado="sem_contacto" and motivo_principal="outro", then use hangUp. Never leave a voicemail.
 If in doubt between a human voice and an automated recording: always proceed to Phase 2.
 
 ---

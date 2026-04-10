@@ -367,9 +367,18 @@ def process_single(checkout: dict, call_done: threading.Event) -> str:
         twilio = TwilioClient()
         call_data = twilio.make_call(phone, twilio.build_twiml_url(), twilio.build_status_callback_url())
         call_sid = call_data.get("sid", "")
+        if not call_sid:
+            logger.error(f"Twilio retornou call_sid vazio para checkout {checkout_id} — a abortar")
+            raise ValueError("Twilio não retornou call_sid válido")
 
         # Migra para a chave real (call_sid) assim que temos o SID
         with _sessions_lock:
+            if _tmp_key not in active_sessions:
+                logger.error(
+                    f"Sessão temporária desapareceu para checkout {checkout_id} "
+                    f"(possível timeout entre Ultravox e Twilio)"
+                )
+                raise KeyError(f"Sessão temporária {_tmp_key} não encontrada")
             active_sessions[call_sid] = active_sessions.pop(_tmp_key)
 
         call_tracker.mark(
