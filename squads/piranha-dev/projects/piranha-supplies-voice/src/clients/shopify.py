@@ -9,6 +9,7 @@ import requests
 
 from src.config import Config
 from src.utils.logger import setup_logger
+from src.utils.phone_normalizer import normalize_phone
 
 logger = setup_logger(__name__)
 
@@ -95,7 +96,7 @@ class ShopifyClient:
     def _is_eligible(self, checkout: dict) -> bool:
         """
         Verifica se o checkout é elegível para ligação.
-        Critérios: completed_at é null e tem phone.
+        Critérios: completed_at é null e tem telefone normalizável para E.164.
         Args:
             checkout: dict bruto da Shopify
         Returns:
@@ -103,8 +104,22 @@ class ShopifyClient:
         """
         if checkout.get("completed_at") is not None:
             return False
-        phone = checkout.get("phone") or checkout.get("customer", {}).get("phone", "")
-        return bool(phone and phone.strip())
+        customer = checkout.get("customer") or {}
+        shipping = checkout.get("shipping_address") or checkout.get("billing_address") or {}
+        phone = (
+            checkout.get("phone")
+            or customer.get("phone")
+            or shipping.get("phone")
+            or ""
+        ).strip()
+        if not phone:
+            return False
+        country_code = (
+            shipping.get("country_code")
+            or _infer_country_from_phone(phone)
+            or "PT"
+        ).upper()
+        return normalize_phone(phone, country_code) is not None
 
     def _extract_contact(self, checkout: dict) -> dict:
         """
@@ -146,9 +161,12 @@ class ShopifyClient:
             or "PT"
         ).upper()
 
+        # Normalizar telefone para E.164 usando o country_code resolvido
+        normalized_phone = normalize_phone(phone, country_code) or phone
+
         return {
             "id": str(checkout.get("id", "")),
-            "phone": phone,
+            "phone": normalized_phone,
             "name": customer.get("first_name") or "cliente",
             "country_code": country_code,
             "products": products,

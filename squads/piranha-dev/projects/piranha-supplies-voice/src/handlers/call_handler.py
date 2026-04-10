@@ -318,12 +318,14 @@ def _process_lead_list(checkouts: list[dict], is_retry: bool) -> None:
         logger.info(f"Checkout {checkout['id']} → {status} (tentativa={'2' if is_retry else '1'})")
 
         if status == "called":
-            logger.info("A aguardar fim da ligação antes de avançar...")
+            logger.info("A aguardar fim da ligação antes de encerrar execução...")
             finished = call_done.wait(timeout=360)  # máx. 6 min por chamada
             if not finished:
-                logger.warning(f"Timeout a aguardar fim da ligação — checkout {checkout['id']}. A avançar.")
+                logger.warning(f"Timeout a aguardar fim da ligação — checkout {checkout['id']}.")
             else:
-                logger.info("Ligação terminada. A avançar para o próximo lead.")
+                logger.info("Ligação terminada.")
+            # 1 lead por execução — o cron volta em 10 min para o próximo
+            break
 
 
 def process_single(checkout: dict, call_done: threading.Event) -> str:

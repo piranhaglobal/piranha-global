@@ -34,10 +34,10 @@ def main() -> None:
         logger.info("Fora da janela de chamadas (11:00–12:30 ou 14:00–17:00). A encerrar.")
         return
 
-    # 3. Buscar checkouts abandonados há 7–14 dias (call_tracker evita re-contacto)
+    # 3. Buscar checkouts abandonados exatamente no 7.º dia (8 dias atrás até 7 dias atrás)
     try:
         shopify = ShopifyClient()
-        checkouts = shopify.get_abandoned_checkouts(day_min=14, day_max=7)
+        checkouts = shopify.get_abandoned_checkouts(day_min=8, day_max=7)
     except Exception as e:
         logger.error(f"Erro ao contactar Shopify: {e}")
         return
