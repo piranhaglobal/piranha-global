@@ -157,6 +157,38 @@ def create_app() -> Flask:
             logger.error(f"Erro ao buscar transcrição Ultravox: {e}")
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/admin/calls/<checkout_id>/recording", methods=["GET"])
+    def admin_recording(checkout_id: str) -> Response:
+        """
+        Retorna a URL de gravação de uma chamada como JSON.
+        Chamado via AJAX pelo dashboard para o audio player no modal.
+        """
+        import json
+        from pathlib import Path
+        from src.clients.ultravox import UltravoxClient
+
+        called_file = Path(__file__).parent.parent.parent / "called.json"
+        try:
+            data = json.loads(called_file.read_text(encoding="utf-8")) if called_file.exists() else {}
+        except Exception:
+            return jsonify({"error": "called.json ilegível"}), 500
+
+        record = data.get(str(checkout_id))
+        if not record:
+            return jsonify({"error": "checkout não encontrado"}), 404
+
+        ultravox_call_id = record.get("ultravox_call_id")
+        if not ultravox_call_id:
+            return jsonify({"error": "sem ultravox_call_id"}), 404
+
+        try:
+            uv = UltravoxClient()
+            result = uv.get_recording(ultravox_call_id)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"Erro ao buscar recording Ultravox: {e}")
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/admin/calls", methods=["GET"])
     def admin_calls() -> Response:
         """
@@ -401,19 +433,23 @@ def create_app() -> Flask:
     </div>
   </div>
 
-  <!-- MODAL TRANSCRIÇÃO -->
-  <div id="modal-overlay" onclick="closeModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center"></div>
-  <div id="modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:101;background:white;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(680px,95vw);max-height:85vh;overflow:hidden;flex-direction:column">
-    <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center">
+  <!-- MODAL TRANSCRIÇÃO + ÁUDIO -->
+  <div id="modal-overlay" onclick="closeModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100"></div>
+  <div id="modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:101;background:white;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(700px,95vw);max-height:90vh;overflow:hidden;flex-direction:column">
+    <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
       <div>
         <div id="modal-title" style="font-weight:600;font-size:15px"></div>
         <div id="modal-sub" style="font-size:12px;color:#64748b;margin-top:2px"></div>
       </div>
       <button onclick="closeModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#64748b;line-height:1">✕</button>
     </div>
-    <div id="modal-body" style="overflow-y:auto;padding:20px;flex:1;max-height:calc(85vh - 70px)">
-      <div id="modal-loading" style="text-align:center;padding:40px;color:#94a3b8">A carregar transcrição...</div>
-      <div id="modal-messages" style="display:none;display:flex;flex-direction:column;gap:12px"></div>
+    <div id="modal-audio-wrap" style="display:none;padding:12px 20px;background:#f8fafc;border-bottom:1px solid #e2e8f0;flex-shrink:0">
+      <div style="font-size:11px;font-weight:600;color:#475569;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">🎙 Gravação da chamada</div>
+      <audio id="modal-audio" controls style="width:100%;height:36px;accent-color:#3b82f6"></audio>
+    </div>
+    <div id="modal-body" style="overflow-y:auto;padding:20px;flex:1">
+      <div id="modal-loading" style="text-align:center;padding:40px;color:#94a3b8">A carregar...</div>
+      <div id="modal-messages" style="display:none;flex-direction:column;gap:12px"></div>
       <div id="modal-error" style="display:none;color:#ef4444;text-align:center;padding:40px"></div>
     </div>
   </div>
@@ -426,56 +462,83 @@ def create_app() -> Flask:
       document.getElementById('modal-messages').style.display = 'none';
       document.getElementById('modal-messages').innerHTML = '';
       document.getElementById('modal-error').style.display = 'none';
+      document.getElementById('modal-audio-wrap').style.display = 'none';
+      document.getElementById('modal-audio').src = '';
       document.getElementById('modal-overlay').style.display = 'block';
       document.getElementById('modal').style.display = 'flex';
 
-      fetch('/admin/calls/' + checkoutId + '/transcript')
-        .then(r => r.json())
-        .then(data => {{
-          document.getElementById('modal-loading').style.display = 'none';
-          if (data.error) {{
-            document.getElementById('modal-error').textContent = data.error;
-            document.getElementById('modal-error').style.display = 'block';
-            return;
-          }}
-          const msgs = data.messages || [];
-          if (!msgs.length) {{
-            document.getElementById('modal-error').textContent = 'Sem mensagens na transcrição.';
-            document.getElementById('modal-error').style.display = 'block';
-            return;
-          }}
-          const container = document.getElementById('modal-messages');
-          container.style.display = 'flex';
-          msgs.forEach(m => {{
-            const isAgent = m.role === 'MESSAGE_ROLE_AGENT';
-            const start = m.timespan ? parseFloat(m.timespan.start) : null;
-            const timeStr = start !== null ? formatSecs(start) : '';
-            const wrap = document.createElement('div');
-            wrap.style.cssText = 'display:flex;flex-direction:column;align-items:' + (isAgent ? 'flex-start' : 'flex-end');
-            const label = document.createElement('div');
-            label.style.cssText = 'font-size:10px;color:#94a3b8;margin-bottom:3px;padding:0 4px';
-            label.textContent = (isAgent ? '🤖 Bruno' : '👤 Cliente') + (timeStr ? '  ' + timeStr : '');
-            const bubble = document.createElement('div');
-            bubble.style.cssText = 'max-width:85%;padding:10px 14px;border-radius:' +
-              (isAgent ? '4px 16px 16px 16px' : '16px 4px 16px 16px') +
-              ';background:' + (isAgent ? '#eff6ff' : '#f1f5f9') +
-              ';color:' + (isAgent ? '#1e3a8a' : '#1e293b') +
-              ';font-size:13px;line-height:1.5;border:1px solid ' +
-              (isAgent ? '#bfdbfe' : '#e2e8f0');
-            bubble.textContent = m.text.trim();
-            wrap.appendChild(label);
-            wrap.appendChild(bubble);
-            container.appendChild(wrap);
-          }});
-        }})
-        .catch(err => {{
-          document.getElementById('modal-loading').style.display = 'none';
-          document.getElementById('modal-error').textContent = 'Erro: ' + err;
+      const transcriptP = fetch('/admin/calls/' + checkoutId + '/transcript').then(r => r.json());
+      const recordingP  = fetch('/admin/calls/' + checkoutId + '/recording').then(r => r.json()).catch(() => ({{}}));
+
+      Promise.all([transcriptP, recordingP]).then(([data, rec]) => {{
+        document.getElementById('modal-loading').style.display = 'none';
+
+        // Audio player
+        const recUrl = rec.recordingUrl || rec.url || null;
+        if (recUrl) {{
+          const audio = document.getElementById('modal-audio');
+          audio.src = recUrl;
+          document.getElementById('modal-audio-wrap').style.display = 'block';
+        }}
+
+        // Transcrição
+        if (data.error) {{
+          document.getElementById('modal-error').textContent = data.error;
           document.getElementById('modal-error').style.display = 'block';
+          return;
+        }}
+        const msgs = data.messages || [];
+        if (!msgs.length) {{
+          document.getElementById('modal-error').textContent = 'Sem mensagens na transcrição.';
+          document.getElementById('modal-error').style.display = 'block';
+          return;
+        }}
+        const container = document.getElementById('modal-messages');
+        container.style.display = 'flex';
+        const audio = document.getElementById('modal-audio');
+        msgs.forEach(m => {{
+          const isAgent = m.role === 'MESSAGE_ROLE_AGENT';
+          const startSec = m.timespan ? parseFloat(m.timespan.start) : null;
+          const timeStr  = startSec !== null ? formatSecs(startSec) : '';
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'display:flex;flex-direction:column;align-items:' + (isAgent ? 'flex-start' : 'flex-end');
+          const labelRow = document.createElement('div');
+          labelRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;padding:0 4px';
+          const labelText = document.createElement('span');
+          labelText.style.cssText = 'font-size:10px;color:#94a3b8';
+          labelText.textContent = (isAgent ? '🤖 Bruno' : '👤 Cliente') + (timeStr ? '  ' + timeStr : '');
+          labelRow.appendChild(labelText);
+          if (!isAgent && startSec !== null && audio.src) {{
+            const seekBtn = document.createElement('button');
+            seekBtn.textContent = '▶';
+            seekBtn.title = 'Ouvir este momento';
+            seekBtn.style.cssText = 'background:#3b82f6;color:white;border:none;border-radius:4px;padding:1px 6px;font-size:10px;cursor:pointer;line-height:1.4';
+            seekBtn.onclick = () => {{ audio.currentTime = startSec; audio.play(); }};
+            labelRow.appendChild(seekBtn);
+          }}
+          const bubble = document.createElement('div');
+          bubble.style.cssText = 'max-width:85%;padding:10px 14px;border-radius:' +
+            (isAgent ? '4px 16px 16px 16px' : '16px 4px 16px 16px') +
+            ';background:' + (isAgent ? '#eff6ff' : '#f1f5f9') +
+            ';color:' + (isAgent ? '#1e3a8a' : '#1e293b') +
+            ';font-size:13px;line-height:1.5;border:1px solid ' +
+            (isAgent ? '#bfdbfe' : '#e2e8f0');
+          bubble.textContent = m.text.trim();
+          wrap.appendChild(labelRow);
+          wrap.appendChild(bubble);
+          container.appendChild(wrap);
         }});
+      }}).catch(err => {{
+        document.getElementById('modal-loading').style.display = 'none';
+        document.getElementById('modal-error').textContent = 'Erro: ' + err;
+        document.getElementById('modal-error').style.display = 'block';
+      }});
     }}
 
     function closeModal() {{
+      const audio = document.getElementById('modal-audio');
+      audio.pause();
+      audio.src = '';
       document.getElementById('modal-overlay').style.display = 'none';
       document.getElementById('modal').style.display = 'none';
     }}

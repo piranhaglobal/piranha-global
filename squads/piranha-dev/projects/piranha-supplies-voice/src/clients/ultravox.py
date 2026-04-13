@@ -60,6 +60,8 @@ class UltravoxClient:
             # Um limite fixo causaria desconexão abrupta a meio de uma fala.
             # Medium correto para Twilio Media Streams
             "medium": {"twilio": {}},
+            # Ativa gravação para permitir playback no dashboard /admin/calls
+            "recordingEnabled": True,
             # VAD — ajustado para chamadas outbound via Twilio (µ-law 8kHz)
             # Contexto: recuperação de checkout — clientes hesitam antes de responder;
             # chamadas móveis EU têm ruído de fundo e artefactos de codec frequentes.
@@ -210,6 +212,20 @@ class UltravoxClient:
 
         logger.info(f"Sessão Ultravox criada | callId={data.get('callId')} | lang={language_hint} | model={self.MODEL}")
         return data  # {"callId": "...", "joinUrl": "wss://...", "status": "created"}
+
+    def get_recording(self, call_id: str) -> dict:
+        """
+        Retorna a URL de gravação de uma chamada.
+        Args:
+            call_id: UUID da chamada Ultravox
+        Returns:
+            dict com "recordingUrl" (pode ser None se recording não estava ativo)
+        Raises:
+            requests.HTTPError: se a chamada não existir ou API falhar
+        """
+        response = self.session.get(f"{self.BASE_URL}/calls/{call_id}/recording")
+        response.raise_for_status()
+        return response.json()
 
     def get_call_status(self, call_id: str) -> str:
         """
