@@ -157,37 +157,64 @@ def create_app() -> Flask:
             logger.error(f"Erro ao buscar transcrição Ultravox: {e}")
             return jsonify({"error": str(e)}), 500
 
-    @app.route("/admin/calls/<checkout_id>/recording", methods=["GET"])
+    @app.route("/admin/calls/<checkout_id>/recording", methods=["GET", "HEAD"])
     def admin_recording(checkout_id: str) -> Response:
         """
-        Retorna a URL de gravação de uma chamada como JSON.
-        Chamado via AJAX pelo dashboard para o audio player no modal.
+        Proxy de áudio — faz stream da gravação Ultravox com autenticação servidor-a-servidor.
+        O browser não consegue enviar X-API-Key diretamente, por isso o servidor faz o download
+        e serve o áudio ao browser com os headers corretos.
         """
         import json
+        import requests as req
         from pathlib import Path
         from src.clients.ultravox import UltravoxClient
+        from src.config import Config
 
         called_file = Path(__file__).parent.parent.parent / "called.json"
         try:
             data = json.loads(called_file.read_text(encoding="utf-8")) if called_file.exists() else {}
         except Exception:
-            return jsonify({"error": "called.json ilegível"}), 500
+            return Response("called.json ilegível", status=500)
 
         record = data.get(str(checkout_id))
         if not record:
-            return jsonify({"error": "checkout não encontrado"}), 404
+            return Response("checkout não encontrado", status=404)
 
         ultravox_call_id = record.get("ultravox_call_id")
         if not ultravox_call_id:
-            return jsonify({"error": "sem ultravox_call_id"}), 404
+            return Response("sem ultravox_call_id", status=404)
 
         try:
+            # 1. Obter a URL de download da gravação
             uv = UltravoxClient()
             result = uv.get_recording(ultravox_call_id)
-            return jsonify(result)
+            recording_url = result.get("recordingUrl") or result.get("url")
+            if not recording_url:
+                return Response("sem gravação disponível", status=404)
+
+            # HEAD: apenas confirmar disponibilidade sem fazer download
+            if request.method == "HEAD":
+                return Response(status=200, content_type="audio/mpeg")
+
+            # GET: proxy do áudio — descarregar com API key e servir ao browser
+            audio_resp = req.get(
+                recording_url,
+                headers={"X-API-Key": Config.ULTRAVOX_API_KEY},
+                stream=True,
+                timeout=30,
+            )
+            audio_resp.raise_for_status()
+
+            content_type = audio_resp.headers.get("Content-Type", "audio/mpeg")
+            return Response(
+                audio_resp.iter_content(chunk_size=8192),
+                status=200,
+                content_type=content_type,
+                headers={"Accept-Ranges": "none"},
+            )
         except Exception as e:
-            logger.error(f"Erro ao buscar recording Ultravox: {e}")
-            return jsonify({"error": str(e)}), 500
+            logger.error(f"Erro ao fazer proxy do recording Ultravox: {e}")
+            return Response(str(e), status=500)
 
     @app.route("/admin/calls", methods=["GET"])
     def admin_calls() -> Response:
@@ -467,17 +494,18 @@ def create_app() -> Flask:
       document.getElementById('modal-overlay').style.display = 'block';
       document.getElementById('modal').style.display = 'flex';
 
+      // Verificar se o recording existe via HEAD antes de mostrar o player
       const transcriptP = fetch('/admin/calls/' + checkoutId + '/transcript').then(r => r.json());
-      const recordingP  = fetch('/admin/calls/' + checkoutId + '/recording').then(r => r.json()).catch(() => ({{}}));
+      const recordingP  = fetch('/admin/calls/' + checkoutId + '/recording', {{method:'HEAD'}})
+                            .then(r => r.ok).catch(() => false);
 
-      Promise.all([transcriptP, recordingP]).then(([data, rec]) => {{
+      Promise.all([transcriptP, recordingP]).then(([data, hasRecording]) => {{
         document.getElementById('modal-loading').style.display = 'none';
 
-        // Audio player
-        const recUrl = rec.recordingUrl || rec.url || null;
-        if (recUrl) {{
+        // Audio player — apontar para o endpoint proxy do servidor
+        if (hasRecording) {{
           const audio = document.getElementById('modal-audio');
-          audio.src = recUrl;
+          audio.src = '/admin/calls/' + checkoutId + '/recording';
           document.getElementById('modal-audio-wrap').style.display = 'block';
         }}
 
