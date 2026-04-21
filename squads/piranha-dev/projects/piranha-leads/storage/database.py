@@ -21,8 +21,13 @@ CREATE TABLE IF NOT EXISTS leads (
     business_status TEXT,
     source        TEXT DEFAULT 'google_places',
     status        TEXT DEFAULT 'new',
+    klaviyo_synced INTEGER DEFAULT 0,
     created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+"""
+
+MIGRATE_SQL = """
+ALTER TABLE leads ADD COLUMN klaviyo_synced INTEGER DEFAULT 0;
 """
 
 
@@ -36,7 +41,13 @@ def get_connection() -> sqlite3.Connection:
 def init_db():
     with get_connection() as conn:
         conn.execute(CREATE_TABLE_SQL)
+        # migrate existing DBs that don't have klaviyo_synced column
+        try:
+            conn.execute(MIGRATE_SQL)
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
+    init_jobs_table()
 
 
 def upsert_lead(lead: dict):
@@ -63,6 +74,82 @@ def get_all_leads() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute("SELECT * FROM leads ORDER BY city, name").fetchall()
         return [dict(row) for row in rows]
+
+
+def get_unsynced_leads() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM leads WHERE klaviyo_synced = 0 AND (email IS NOT NULL OR phone IS NOT NULL) ORDER BY city, name"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def mark_leads_synced(lead_ids: list[int]):
+    if not lead_ids:
+        return
+    placeholders = ",".join("?" * len(lead_ids))
+    with get_connection() as conn:
+        conn.execute(
+            f"UPDATE leads SET klaviyo_synced = 1 WHERE id IN ({placeholders})",
+            lead_ids,
+        )
+        conn.commit()
+
+
+CREATE_JOBS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS jobs (
+    id            TEXT PRIMARY KEY,
+    query         TEXT,
+    cities        TEXT,  -- JSON array
+    status        TEXT DEFAULT 'running',
+    leads_found   INTEGER DEFAULT 0,
+    leads_with_email INTEGER DEFAULT 0,
+    klaviyo_synced INTEGER DEFAULT 0,
+    started_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    finished_at   DATETIME,
+    duration_seconds REAL,
+    error         TEXT
+);
+"""
+
+
+def init_jobs_table():
+    with get_connection() as conn:
+        conn.execute(CREATE_JOBS_TABLE_SQL)
+        conn.commit()
+
+
+def create_job(job_id: str, query: str, cities: list) -> dict:
+    import json
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, query, cities) VALUES (?, ?, ?)",
+            (job_id, query, json.dumps(cities))
+        )
+        conn.commit()
+    return get_job(job_id)
+
+
+def get_job(job_id: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_all_jobs() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute("SELECT * FROM jobs ORDER BY started_at DESC").fetchall()
+        return [dict(row) for row in rows]
+
+
+def update_job(job_id: str, **kwargs):
+    if not kwargs:
+        return
+    fields = ", ".join(f"{k} = ?" for k in kwargs)
+    values = list(kwargs.values()) + [job_id]
+    with get_connection() as conn:
+        conn.execute(f"UPDATE jobs SET {fields} WHERE id = ?", values)
+        conn.commit()
 
 
 def export_csv():

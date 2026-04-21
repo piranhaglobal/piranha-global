@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-from config import SEARCH_QUERY, RESULTS_PER_CITY, REQUEST_DELAY
+from config import SEARCH_QUERY, RESULTS_PER_CITY, REQUEST_DELAY, MIN_REVIEWS
 
 
 PLACES_TEXT_SEARCH_URL = "https://maps.googleapis.com/maps/api/place/textsearch/json"
@@ -22,6 +22,8 @@ def search_studios_in_city(city: str, api_key: str) -> list[dict]:
         "region": "es",
     }
 
+    # Fetch up to RESULTS_PER_CITY candidates (max 60 = 3 pages of 20)
+    # The caller is responsible for filtering by MIN_REVIEWS
     while len(studios) < RESULTS_PER_CITY:
         response = requests.get(PLACES_TEXT_SEARCH_URL, params=params, timeout=10)
         response.raise_for_status()
@@ -33,14 +35,14 @@ def search_studios_in_city(city: str, api_key: str) -> list[dict]:
 
         results = data.get("results", [])
         for place in results:
-            if len(studios) >= RESULTS_PER_CITY:
-                break
-
             studio = _parse_place(place, city)
             studios.append(studio)
 
         next_page_token = data.get("next_page_token")
-        if not next_page_token or len(studios) >= RESULTS_PER_CITY:
+        if not next_page_token:
+            break
+
+        if len(studios) >= RESULTS_PER_CITY:
             break
 
         # Google requires a short delay before using next_page_token
