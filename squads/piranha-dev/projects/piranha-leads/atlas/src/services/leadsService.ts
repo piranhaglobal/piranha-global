@@ -22,3 +22,14 @@ export async function startValidation(ids: number[], autoKlaviyo: boolean): Prom
   const data = await res.json()
   return data.validation_id
 }
+
+export async function startEnrichment(ids: number[]): Promise<string> {
+  const res = await fetch('/api/leads/enrich', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, auto_klaviyo: false }),
+  })
+  if (!res.ok) throw new Error('Failed to start enrichment')
+  const data = await res.json()
+  return data.enrichment_id
+}

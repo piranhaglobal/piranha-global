@@ -22,13 +22,19 @@ CREATE TABLE IF NOT EXISTS leads (
     source        TEXT DEFAULT 'google_places',
     status        TEXT DEFAULT 'new',
     klaviyo_synced INTEGER DEFAULT 0,
+    instagram_url TEXT,
+    facebook_url  TEXT,
+    validated_at  DATETIME,
     created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 """
 
-MIGRATE_SQL = """
-ALTER TABLE leads ADD COLUMN klaviyo_synced INTEGER DEFAULT 0;
-"""
+MIGRATIONS = [
+    "ALTER TABLE leads ADD COLUMN klaviyo_synced INTEGER DEFAULT 0",
+    "ALTER TABLE leads ADD COLUMN instagram_url TEXT",
+    "ALTER TABLE leads ADD COLUMN facebook_url TEXT",
+    "ALTER TABLE leads ADD COLUMN validated_at DATETIME",
+]
 
 
 def get_connection() -> sqlite3.Connection:
@@ -41,11 +47,12 @@ def get_connection() -> sqlite3.Connection:
 def init_db():
     with get_connection() as conn:
         conn.execute(CREATE_TABLE_SQL)
-        # migrate existing DBs that don't have klaviyo_synced column
-        try:
-            conn.execute(MIGRATE_SQL)
-        except sqlite3.OperationalError:
-            pass
+        # Migrate existing DBs that don't have the latest columns yet.
+        for sql in MIGRATIONS:
+            try:
+                conn.execute(sql)
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
     init_jobs_table()
 
@@ -56,12 +63,21 @@ def upsert_lead(lead: dict):
     Existing emails/phones are preserved if new data is empty.
     """
     sql = """
-    INSERT INTO leads (place_id, name, city, address, phone, website, email, rating, total_reviews, business_status, source)
-    VALUES (:place_id, :name, :city, :address, :phone, :website, :email, :rating, :total_reviews, :business_status, :source)
+    INSERT INTO leads (
+        place_id, name, city, address, phone, website, email, rating,
+        total_reviews, business_status, source, instagram_url, facebook_url, validated_at
+    )
+    VALUES (
+        :place_id, :name, :city, :address, :phone, :website, :email, :rating,
+        :total_reviews, :business_status, :source, :instagram_url, :facebook_url, :validated_at
+    )
     ON CONFLICT(place_id) DO UPDATE SET
         phone    = COALESCE(excluded.phone, leads.phone),
         website  = COALESCE(excluded.website, leads.website),
         email    = COALESCE(excluded.email, leads.email),
+        instagram_url = COALESCE(excluded.instagram_url, leads.instagram_url),
+        facebook_url  = COALESCE(excluded.facebook_url, leads.facebook_url),
+        validated_at = COALESCE(excluded.validated_at, leads.validated_at),
         rating   = excluded.rating,
         total_reviews = excluded.total_reviews
     """
@@ -161,7 +177,7 @@ def export_csv():
     CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "id", "name", "city", "address", "phone",
-        "website", "email", "rating", "total_reviews",
+        "website", "email", "instagram_url", "facebook_url", "rating", "total_reviews",
         "business_status", "source", "status", "created_at",
     ]
 

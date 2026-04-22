@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Filter, Download, RefreshCw, Loader, ShieldCheck, X, CheckCircle, AlertCircle, Trash2 } from 'lucide-react'
+import { Filter, Download, RefreshCw, Loader, ShieldCheck, X, CheckCircle, AlertCircle, Trash2, Sparkles } from 'lucide-react'
 import type { Lead } from '../../types'
-import { fetchLeads, startValidation } from '../../services/leadsService'
+import { fetchLeads, startEnrichment, startValidation } from '../../services/leadsService'
 import { triggerKlaviyoSync } from '../../services/klaviyoService'
 import DataGrid from '../ui/DataGrid'
 import LeadDrawer from '../ui/LeadDrawer'
@@ -15,23 +15,30 @@ interface Filters {
   businessStatus: string
   source: string
   klaviyo: string
+  quickFilter: '' | 'missing_email' | 'missing_phone' | 'missing_website' | 'missing_social' | 'needs_enrich'
 }
 
 interface ValidationProgress {
+  mode: 'validate' | 'enrich'
   phase: 'running' | 'done'
   index: number
   total: number
   currentName: string
   changed: number
-  clearedWebsite: number
-  clearedEmail: number
-  clearedPhone: number
+  websiteCount: number
+  emailCount: number
+  phoneCount: number
+  socialCount: number
   klaviyoSynced: number
   log: Array<{ name: string; changed: boolean; details: string }>
 }
 
 function exportCSV(leadsToExport: Lead[]) {
-  const fields: (keyof Lead)[] = ['id', 'name', 'city', 'address', 'phone', 'website', 'email', 'rating', 'total_reviews', 'business_status', 'source', 'status', 'klaviyo_synced', 'created_at']
+  const fields: (keyof Lead)[] = [
+    'id', 'name', 'city', 'address', 'phone', 'website', 'email',
+    'instagram_url', 'facebook_url', 'rating', 'total_reviews',
+    'business_status', 'source', 'status', 'klaviyo_synced', 'created_at'
+  ]
   const header = fields.join(',')
   const rows = leadsToExport.map(l =>
     fields.map(f => {
@@ -60,6 +67,7 @@ export default function StudioDatabase() {
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<KlaviyoSyncResult | null>(null)
   const [validating, setValidating] = useState(false)
+  const [enriching, setEnriching] = useState(false)
   const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
@@ -71,6 +79,7 @@ export default function StudioDatabase() {
     businessStatus: '',
     source: '',
     klaviyo: '',
+    quickFilter: '',
   })
 
   async function load() {
@@ -100,7 +109,9 @@ export default function StudioDatabase() {
         if (!l.name.toLowerCase().includes(q) &&
           !l.city.toLowerCase().includes(q) &&
           !(l.email?.toLowerCase().includes(q)) &&
-          !(l.phone?.includes(q))) return false
+          !(l.phone?.includes(q)) &&
+          !(l.instagram_url?.toLowerCase().includes(q)) &&
+          !(l.facebook_url?.toLowerCase().includes(q))) return false
       }
       if (filters.ratingMin > 0 && (l.rating ?? 0) < filters.ratingMin) return false
       if (filters.reviewsMin > 0 && (l.total_reviews ?? 0) < filters.reviewsMin) return false
@@ -108,9 +119,22 @@ export default function StudioDatabase() {
       if (filters.source && l.source !== filters.source) return false
       if (filters.klaviyo === 'synced' && l.klaviyo_synced !== 1) return false
       if (filters.klaviyo === 'unsynced' && l.klaviyo_synced !== 0) return false
+      if (filters.quickFilter === 'missing_email' && !!l.email) return false
+      if (filters.quickFilter === 'missing_phone' && !!l.phone) return false
+      if (filters.quickFilter === 'missing_website' && !!l.website) return false
+      if (filters.quickFilter === 'missing_social' && (!!l.instagram_url || !!l.facebook_url)) return false
+      if (filters.quickFilter === 'needs_enrich' && l.email && l.phone && l.website && (l.instagram_url || l.facebook_url)) return false
       return true
     })
   }, [leads, filters])
+
+  const quickFilters: Array<{ key: Filters['quickFilter']; label: string }> = [
+    { key: 'missing_email', label: 'Sem email' },
+    { key: 'missing_phone', label: 'Sem telefone' },
+    { key: 'missing_website', label: 'Sem website' },
+    { key: 'missing_social', label: 'Sem social' },
+    { key: 'needs_enrich', label: 'Precisa enrich' },
+  ]
 
   function handleToggleSelect(id: number) {
     setSelectedIds(prev => {
@@ -167,12 +191,12 @@ export default function StudioDatabase() {
   }
 
   async function handleValidate() {
-    if (validating || selectedIds.size === 0) return
+    if (validating || enriching || selectedIds.size === 0) return
     const ids = Array.from(selectedIds)
     setValidating(true)
     setValidationProgress({
-      phase: 'running', index: 0, total: ids.length, currentName: '...',
-      changed: 0, clearedWebsite: 0, clearedEmail: 0, clearedPhone: 0,
+      mode: 'validate', phase: 'running', index: 0, total: ids.length, currentName: '...',
+      changed: 0, websiteCount: 0, emailCount: 0, phoneCount: 0, socialCount: 0,
       klaviyoSynced: 0, log: [],
     })
 
@@ -214,9 +238,9 @@ export default function StudioDatabase() {
                   total: event.total,
                   currentName: event.name,
                   changed: p.changed + (event.changed ? 1 : 0),
-                  clearedWebsite: p.clearedWebsite + (event.website_cleared ? 1 : 0),
-                  clearedEmail:   p.clearedEmail   + (event.email_cleared   ? 1 : 0),
-                  clearedPhone:   p.clearedPhone   + (event.phone_cleared   ? 1 : 0),
+                  websiteCount: p.websiteCount + (event.website_cleared ? 1 : 0),
+                  emailCount:   p.emailCount   + (event.email_cleared   ? 1 : 0),
+                  phoneCount:   p.phoneCount   + (event.phone_cleared   ? 1 : 0),
                   log: event.changed
                     ? [{ name: event.name, changed: true, details: details.join(', ') }, ...p.log].slice(0, 50)
                     : p.log,
@@ -231,9 +255,9 @@ export default function StudioDatabase() {
                 index: event.total,
                 total: event.total,
                 changed: event.changed,
-                clearedWebsite: event.cleared_website,
-                clearedEmail:   event.cleared_email,
-                clearedPhone:   event.cleared_phone,
+                websiteCount: event.cleared_website,
+                emailCount:   event.cleared_email,
+                phoneCount:   event.cleared_phone,
                 klaviyoSynced:  event.klaviyo_synced,
               } : p)
               setValidating(false)
@@ -252,6 +276,91 @@ export default function StudioDatabase() {
     } catch (err) {
       console.error('Validation error:', err)
       setValidating(false)
+      setValidationProgress(p => p ? { ...p, phase: 'done' } : null)
+    }
+  }
+
+  async function handleEnrich() {
+    if (enriching || validating || selectedIds.size === 0) return
+    const ids = Array.from(selectedIds)
+    setEnriching(true)
+    setValidationProgress({
+      mode: 'enrich', phase: 'running', index: 0, total: ids.length, currentName: '...',
+      changed: 0, websiteCount: 0, emailCount: 0, phoneCount: 0, socialCount: 0,
+      klaviyoSynced: 0, log: [],
+    })
+
+    function cleanup(es: EventSource) {
+      es.close()
+      validationEsRef.current = null
+    }
+
+    try {
+      const enrichId = await startEnrichment(ids)
+
+      await new Promise<void>((resolve) => {
+        const es = new EventSource(`/api/leads/enrich/${enrichId}/stream`)
+        validationEsRef.current = es
+
+        es.onopen = () => resolve()
+        setTimeout(resolve, 500)
+
+        es.onmessage = (e) => {
+          try {
+            const event = JSON.parse(e.data)
+            if (event.type === 'ping') return
+
+            if (event.type === 'lead_enrich') {
+              setValidationProgress(p => {
+                if (!p) return p
+                return {
+                  ...p,
+                  index: event.index,
+                  total: event.total,
+                  currentName: event.name,
+                  changed: p.changed + (event.changed ? 1 : 0),
+                  websiteCount: p.websiteCount + (event.website_found ? 1 : 0),
+                  emailCount: p.emailCount + (event.email_found ? 1 : 0),
+                  phoneCount: p.phoneCount + (event.phone_found ? 1 : 0),
+                  socialCount: p.socialCount + (event.social_found ? 1 : 0),
+                  log: event.changed
+                    ? [{ name: event.name, changed: true, details: event.details || 'atualizado' }, ...p.log].slice(0, 50)
+                    : p.log,
+                }
+              })
+            }
+
+            if (event.type === 'enrichment_complete') {
+              setValidationProgress(p => p ? {
+                ...p,
+                phase: 'done',
+                index: event.total,
+                total: event.total,
+                changed: event.changed,
+                websiteCount: event.found_website,
+                emailCount: event.found_email,
+                phoneCount: event.found_phone,
+                socialCount: event.found_social,
+                klaviyoSynced: 0,
+              } : p)
+              setEnriching(false)
+              cleanup(es)
+              load()
+            }
+          } catch {
+            // silent
+          }
+        }
+
+        es.onerror = () => {
+          setEnriching(false)
+          cleanup(es)
+          load()
+        }
+      })
+    } catch (err) {
+      console.error('Enrichment error:', err)
+      setEnriching(false)
       setValidationProgress(p => p ? { ...p, phase: 'done' } : null)
     }
   }
@@ -296,6 +405,31 @@ export default function StudioDatabase() {
           onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
           style={{ ...inputStyle, width: 280 }}
         />
+
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {quickFilters.map(filter => {
+            const active = filters.quickFilter === filter.key
+            return (
+              <button
+                key={filter.key}
+                onClick={() => setFilters(f => ({ ...f, quickFilter: active ? '' : filter.key }))}
+                style={{
+                  padding: '6px 10px',
+                  background: active ? 'rgba(245,158,11,0.14)' : 'transparent',
+                  border: `1px solid ${active ? 'rgba(245,158,11,0.35)' : 'var(--color-border)'}`,
+                  color: active ? '#FBBF24' : 'var(--color-text-secondary)',
+                  borderRadius: 999,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {filter.label}
+              </button>
+            )
+          })}
+        </div>
 
         <button
           onClick={() => setShowFilters(f => !f)}
@@ -352,8 +486,34 @@ export default function StudioDatabase() {
 
         {selectedIds.size > 0 && (
           <button
+            onClick={handleEnrich}
+            disabled={enriching || validating}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              background: enriching ? 'rgba(245,158,11,0.18)' : 'rgba(245,158,11,0.12)',
+              border: '1px solid rgba(245,158,11,0.35)',
+              color: '#FBBF24',
+              borderRadius: 6,
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: enriching || validating ? 'not-allowed' : 'pointer',
+              transition: 'all 0.15s',
+            }}
+          >
+            {enriching
+              ? <Loader size={13} style={{ animation: 'spin 1s linear infinite' }} />
+              : <Sparkles size={13} />}
+            Enriquecer Leads ({selectedIds.size})
+          </button>
+        )}
+
+        {selectedIds.size > 0 && (
+          <button
             onClick={handleValidate}
-            disabled={validating}
+            disabled={validating || enriching}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -365,7 +525,7 @@ export default function StudioDatabase() {
               borderRadius: 6,
               fontSize: 13,
               fontWeight: 500,
-              cursor: validating ? 'not-allowed' : 'pointer',
+              cursor: validating || enriching ? 'not-allowed' : 'pointer',
               transition: 'all 0.15s',
             }}
           >
@@ -479,7 +639,7 @@ export default function StudioDatabase() {
             </select>
           </div>
           <button
-            onClick={() => setFilters({ search: '', ratingMin: 0, reviewsMin: 0, businessStatus: '', source: '', klaviyo: '' })}
+            onClick={() => setFilters({ search: '', ratingMin: 0, reviewsMin: 0, businessStatus: '', source: '', klaviyo: '', quickFilter: '' })}
             style={{
               padding: '6px 12px',
               background: 'transparent',
@@ -612,7 +772,9 @@ export default function StudioDatabase() {
                 ? <Loader size={15} style={{ color: 'var(--color-accent)', animation: 'spin 1s linear infinite' }} />
                 : <CheckCircle size={15} style={{ color: 'var(--color-success)' }} />}
               <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 15, color: 'var(--color-text-primary)' }}>
-                {validationProgress.phase === 'running' ? 'A validar contactos...' : 'Validação concluída'}
+                {validationProgress.phase === 'running'
+                  ? (validationProgress.mode === 'validate' ? 'A validar contactos...' : 'A enriquecer leads...')
+                  : (validationProgress.mode === 'validate' ? 'Validação concluída' : 'Enriquecimento concluído')}
               </span>
               {validationProgress.phase === 'done' && (
                 <button
@@ -653,10 +815,10 @@ export default function StudioDatabase() {
             }}>
               {[
                 { label: 'Alterados', value: validationProgress.changed, color: validationProgress.changed > 0 ? 'var(--color-warning)' : 'var(--color-text-secondary)' },
-                { label: 'Website', value: validationProgress.clearedWebsite, color: 'var(--color-text-secondary)' },
-                { label: 'Email', value: validationProgress.clearedEmail, color: 'var(--color-text-secondary)' },
-                { label: 'Telefone', value: validationProgress.clearedPhone, color: 'var(--color-text-secondary)' },
-                { label: 'Klaviyo sync', value: validationProgress.klaviyoSynced, color: validationProgress.klaviyoSynced > 0 ? 'var(--color-success)' : 'var(--color-text-secondary)' },
+                { label: validationProgress.mode === 'validate' ? 'Website limpo' : 'Website', value: validationProgress.websiteCount, color: 'var(--color-text-secondary)' },
+                { label: validationProgress.mode === 'validate' ? 'Email limpo' : 'Email', value: validationProgress.emailCount, color: 'var(--color-text-secondary)' },
+                { label: validationProgress.mode === 'validate' ? 'Telefone limpo' : 'Telefone', value: validationProgress.phoneCount, color: 'var(--color-text-secondary)' },
+                { label: validationProgress.mode === 'validate' ? 'Klaviyo sync' : 'Social', value: validationProgress.mode === 'validate' ? validationProgress.klaviyoSynced : validationProgress.socialCount, color: validationProgress.mode === 'validate' && validationProgress.klaviyoSynced > 0 ? 'var(--color-success)' : 'var(--color-text-secondary)' },
               ].map(s => (
                 <div key={s.label} style={{ textAlign: 'center' }}>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, fontWeight: 700, color: s.color }}>{s.value}</div>
@@ -669,13 +831,17 @@ export default function StudioDatabase() {
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 20px 16px' }}>
               {validationProgress.log.length === 0 && validationProgress.phase === 'running' && (
                 <div style={{ color: 'var(--color-text-secondary)', fontSize: 12, paddingTop: 8 }}>
-                  A verificar leads — apenas alterações serão listadas aqui.
+                  {validationProgress.mode === 'validate'
+                    ? 'A verificar leads — apenas alterações serão listadas aqui.'
+                    : 'A enriquecer leads — apenas alterações serão listadas aqui.'}
                 </div>
               )}
               {validationProgress.phase === 'done' && validationProgress.log.length === 0 && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 8, color: 'var(--color-success)', fontSize: 13 }}>
                   <CheckCircle size={14} />
-                  Todos os contactos estão válidos — nenhuma alteração necessária.
+                  {validationProgress.mode === 'validate'
+                    ? 'Todos os contactos estão válidos — nenhuma alteração necessária.'
+                    : 'Nenhum dado adicional foi encontrado nesta tentativa.'}
                 </div>
               )}
               {validationProgress.log.map((entry, i) => (

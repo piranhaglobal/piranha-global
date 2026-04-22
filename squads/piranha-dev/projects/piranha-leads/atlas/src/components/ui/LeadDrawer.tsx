@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { X, MessageCircle, Globe, Mail, Phone, MapPin, Star, Users, CheckCircle, Circle } from 'lucide-react'
+import { X, MessageCircle, Globe, Mail, Phone, MapPin, Star, Users, CheckCircle, Circle, Instagram, Facebook } from 'lucide-react'
 import type { Lead } from '../../types'
 import { formatReviews } from '../../lib/utils'
 
@@ -190,6 +190,18 @@ export default function LeadDrawer({ lead, onClose }: Props) {
                 value={lead.website}
                 href={lead.website ?? undefined}
               />
+              <Field
+                icon={<Instagram size={14} />}
+                label="Instagram"
+                value={lead.instagram_url}
+                href={lead.instagram_url ?? undefined}
+              />
+              <Field
+                icon={<Facebook size={14} />}
+                label="Facebook"
+                value={lead.facebook_url}
+                href={lead.facebook_url ?? undefined}
+              />
               <Field icon={<Star size={14} />} label="Fonte" value={lead.source === 'google_places' ? 'Google Places' : 'Páginas Amarillas'} />
               <Field icon={<CheckCircle size={14} />} label="Status" value={lead.status} />
               <Field icon={<CheckCircle size={14} />} label="Criado em" value={new Date(lead.created_at).toLocaleString('pt-PT')} />
@@ -246,6 +258,56 @@ export default function LeadDrawer({ lead, onClose }: Props) {
                 >
                   <Globe size={14} />
                   Website
+                </a>
+              )}
+              {!lead.website && lead.instagram_url && (
+                <a
+                  href={lead.instagram_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    padding: '8px 12px',
+                    background: 'rgba(244,114,182,0.12)',
+                    border: '1px solid rgba(244,114,182,0.3)',
+                    color: '#F9A8D4',
+                    borderRadius: 6,
+                    textDecoration: 'none',
+                    fontSize: 13,
+                    fontWeight: 500,
+                  }}
+                >
+                  <Instagram size={14} />
+                  Instagram
+                </a>
+              )}
+              {!lead.website && !lead.instagram_url && lead.facebook_url && (
+                <a
+                  href={lead.facebook_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    padding: '8px 12px',
+                    background: 'rgba(59,130,246,0.12)',
+                    border: '1px solid rgba(59,130,246,0.3)',
+                    color: '#93C5FD',
+                    borderRadius: 6,
+                    textDecoration: 'none',
+                    fontSize: 13,
+                    fontWeight: 500,
+                  }}
+                >
+                  <Facebook size={14} />
+                  Facebook
                 </a>
               )}
               <button

@@ -13,6 +13,8 @@ interface ProgressState {
   totalCities: number
   leadsFound: number
   leadsWithEmail: number
+  validatedCount: number
+  enrichedCount: number
   phase: 'idle' | 'collecting' | 'klaviyo' | 'done'
 }
 
@@ -24,11 +26,13 @@ export default function ScraperControl() {
   )
   const [enrichEmail, setEnrichEmail] = useState(true)
   const [useFirecrawl, setUseFirecrawl] = useState(false)
+  const [validateAndEnrich, setValidateAndEnrich] = useState(true)
   const [autoKlaviyo, setAutoKlaviyo] = useState(true)
   const [running, setRunning] = useState(false)
   const [runningJobId, setRunningJobId] = useState<string | null>(null)
   const [progress, setProgress] = useState<ProgressState>({
-    currentCity: null, cityIndex: 0, totalCities: 0, leadsFound: 0, leadsWithEmail: 0, phase: 'idle',
+    currentCity: null, cityIndex: 0, totalCities: 0, leadsFound: 0, leadsWithEmail: 0,
+    validatedCount: 0, enrichedCount: 0, phase: 'idle',
   })
   const [sseLog, setSseLog] = useState<SSEEvent[]>([])
   const [jobs, setJobs] = useState<ScraperJob[]>([])
@@ -90,7 +94,16 @@ export default function ScraperControl() {
     if (running || selectedCities.length === 0) return
     setRunning(true)
     setSseLog([])
-    setProgress({ currentCity: null, cityIndex: 0, totalCities: selectedCities.length, leadsFound: 0, leadsWithEmail: 0, phase: 'collecting' })
+    setProgress({
+      currentCity: null,
+      cityIndex: 0,
+      totalCities: selectedCities.length,
+      leadsFound: 0,
+      leadsWithEmail: 0,
+      validatedCount: 0,
+      enrichedCount: 0,
+      phase: 'collecting',
+    })
 
     try {
       const { job_id } = await startJob({
@@ -98,6 +111,7 @@ export default function ScraperControl() {
         cities: selectedCities,
         enrich_email: enrichEmail,
         use_firecrawl: useFirecrawl,
+        validate_and_enrich: validateAndEnrich,
         auto_klaviyo: autoKlaviyo,
       })
       setRunningJobId(job_id)
@@ -142,6 +156,8 @@ export default function ScraperControl() {
               ...p,
               phase: 'done',
               leadsFound: event.total_leads ?? p.leadsFound,
+              validatedCount: event.validated_count ?? p.validatedCount,
+              enrichedCount: event.enriched_count ?? p.enrichedCount,
             }))
             setRunning(false)
             setRunningJobId(null)
@@ -257,6 +273,14 @@ export default function ScraperControl() {
                 <Mail size={13} />
                 Enriquecer emails
                 {enrichEmail ? <CheckSquare size={13} style={{ marginLeft: 'auto' }} /> : <Square size={13} style={{ marginLeft: 'auto' }} />}
+              </button>
+              <button
+                onClick={() => !running && setValidateAndEnrich(v => !v)}
+                style={toggleStyle(validateAndEnrich)}
+              >
+                <CheckSquare size={13} />
+                Validar + enriquecer após extrair
+                {validateAndEnrich ? <CheckSquare size={13} style={{ marginLeft: 'auto' }} /> : <Square size={13} style={{ marginLeft: 'auto' }} />}
               </button>
               <button
                 onClick={() => !running && setUseFirecrawl(v => !v)}
@@ -493,6 +517,22 @@ export default function ScraperControl() {
                   {progress.leadsWithEmail} ({emailPct}%)
                 </span>
               </div>
+              {validateAndEnrich && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>Validados:</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                      {progress.validatedCount}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>Enriquecidos:</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600, color: 'var(--color-warning)' }}>
+                      {progress.enrichedCount}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Last events log */}
@@ -516,7 +556,7 @@ export default function ScraperControl() {
                     {ev.type === 'city_start' && `→ ${ev.city}`}
                     {ev.type === 'city_progress' && `✓ ${ev.city}: ${ev.leads_found} leads, ${ev.leads_with_email} emails`}
                     {ev.type === 'klaviyo_start' && '⚡ Iniciando sync Klaviyo...'}
-                    {ev.type === 'job_complete' && `✓ Concluído: ${ev.total_leads} leads, ${ev.klaviyo_synced} Klaviyo`}
+                    {ev.type === 'job_complete' && `✓ Concluído: ${ev.total_leads} leads, ${ev.validated_count ?? 0} validados, ${ev.enriched_count ?? 0} enriquecidos, ${ev.klaviyo_synced} Klaviyo`}
                   </div>
                 ))}
               </div>

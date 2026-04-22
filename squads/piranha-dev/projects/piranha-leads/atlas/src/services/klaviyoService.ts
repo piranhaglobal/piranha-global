@@ -17,6 +17,7 @@ export async function startJob(payload: {
   cities: string[]
   enrich_email: boolean
   use_firecrawl: boolean
+  validate_and_enrich: boolean
   auto_klaviyo: boolean
 }): Promise<{ job_id: string }> {
   const res = await fetch('/api/jobs/start', {

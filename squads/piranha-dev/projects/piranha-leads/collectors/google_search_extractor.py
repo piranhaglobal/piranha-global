@@ -5,6 +5,7 @@ Strategy: search '"Business Name" "City" "email"' and extract from snippets.
 import os
 import re
 import unicodedata
+from urllib.parse import urlparse
 
 import requests
 
@@ -41,6 +42,11 @@ _VALID_TLDS = {
 
 # Free/personal providers — valid only when the email local part looks like a business
 _PERSONAL_PROVIDERS = {"gmail.com", "hotmail.com", "yahoo.com", "outlook.com", "icloud.com"}
+_SOCIAL_HOSTS = {
+    "instagram.com", "www.instagram.com",
+    "facebook.com", "www.facebook.com",
+}
+_PHONE_RE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
 
 
 def _normalize(text: str) -> str:
@@ -115,6 +121,84 @@ def _emails_from_results(results: list[dict], name: str = "", city: str = "") ->
     return found
 
 
+def _clean_link(url: str | None) -> str | None:
+    if not url:
+        return None
+    cleaned = url.strip()
+    if not cleaned.startswith(("http://", "https://")):
+        return None
+    return cleaned
+
+
+def _host(url: str | None) -> str:
+    if not url:
+        return ""
+    try:
+        return urlparse(url).netloc.lower()
+    except Exception:
+        return ""
+
+
+def _normalize_phone_candidate(raw_phone: str) -> str | None:
+    phone = raw_phone.strip()
+    phone = re.sub(r"(?:ext|ramal|anexo)\s*\d+$", "", phone, flags=re.IGNORECASE).strip()
+    phone = re.sub(r"[^\d+]", "", phone)
+    if not phone:
+        return None
+    if not phone.startswith("+"):
+        digits = re.sub(r"\D", "", phone)
+        if len(digits) == 9:
+            phone = f"+34{digits}"
+        else:
+            return None
+
+    try:
+        from validators.contact_validator import validate_phone
+        return phone if validate_phone(phone)["valid"] else None
+    except Exception:
+        return None
+
+
+def _phones_from_results(results: list[dict]) -> list[str]:
+    found: list[str] = []
+    for result in results:
+        text = " ".join(
+            part for part in (
+                result.get("title", ""),
+                result.get("snippet", ""),
+                result.get("link", ""),
+            ) if part
+        )
+        for raw_phone in _PHONE_RE.findall(text):
+            phone = _normalize_phone_candidate(raw_phone)
+            if phone and phone not in found:
+                found.append(phone)
+    return found
+
+
+def _pick_best_website(results: list[dict]) -> str | None:
+    for result in results:
+        link = _clean_link(result.get("link"))
+        host = _host(link)
+        if not link or not host:
+            continue
+        if host in _SOCIAL_HOSTS:
+            continue
+        if any(host == noise or host.endswith("." + noise) for noise in _NOISE_DOMAINS):
+            continue
+        return link
+    return None
+
+
+def _pick_social_link(results: list[dict], host_suffix: str) -> str | None:
+    for result in results:
+        link = _clean_link(result.get("link"))
+        host = _host(link)
+        if host == host_suffix or host == f"www.{host_suffix}":
+            return link
+    return None
+
+
 def search_email_for_lead(name: str, city: str) -> str | None:
     """
     Searches Google (via Serper) for the business email using advanced queries.
@@ -143,3 +227,35 @@ def search_email_for_lead(name: str, city: str) -> str | None:
             return emails[0]
 
     return None
+
+
+def search_contact_info_for_lead(name: str, city: str) -> dict:
+    """
+    Search-based enrichment for missing contact information.
+    Returns any combination of email, phone, website and social links.
+    """
+    if not name:
+        return {
+            "email": None,
+            "phone": None,
+            "website": None,
+            "instagram_url": None,
+            "facebook_url": None,
+        }
+
+    generic_results = _search_serper(f'"{name}" "{city}"', num=5)
+    contact_results = _search_serper(f'"{name}" "{city}" contacto OR contact OR telefono OR phone OR email', num=5)
+    instagram_results = _search_serper(f'"{name}" "{city}" site:instagram.com', num=5)
+    facebook_results = _search_serper(f'"{name}" "{city}" site:facebook.com', num=5)
+
+    combined_results = generic_results + contact_results + instagram_results + facebook_results
+    emails = _emails_from_results(combined_results, name, city)
+    phones = _phones_from_results(combined_results)
+
+    return {
+        "email": emails[0] if emails else None,
+        "phone": phones[0] if phones else None,
+        "website": _pick_best_website(generic_results + contact_results),
+        "instagram_url": _pick_social_link(instagram_results + generic_results, "instagram.com"),
+        "facebook_url": _pick_social_link(facebook_results + generic_results, "facebook.com"),
+    }

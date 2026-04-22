@@ -6,15 +6,20 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Resolve paths
-BASE_DIR = Path(__file__).parent.parent
+BASE_DIR = Path(__file__).resolve().parents[2]
+ATLAS_DIR = BASE_DIR / "atlas"
+DIST_DIR = ATLAS_DIR / "dist"
+ASSETS_DIR = DIST_DIR / "assets"
 sys.path.insert(0, str(BASE_DIR))
 load_dotenv(BASE_DIR / ".env", override=True)
 
@@ -42,6 +47,7 @@ class JobStartRequest(BaseModel):
     cities: list[str] = []
     enrich_email: bool = True
     use_firecrawl: bool = False
+    validate_and_enrich: bool = False
     auto_klaviyo: bool = False
 
 
@@ -60,6 +66,7 @@ class ValidateRequest(BaseModel):
 
 
 _validation_queues: dict[str, asyncio.Queue] = {}
+_enrichment_queues: dict[str, asyncio.Queue] = {}
 
 
 @app.post("/api/leads/validate")
@@ -93,10 +100,27 @@ async def start_validation(req: ValidateRequest):
                 if e_changed: cleared_email  += 1
                 if p_changed: cleared_phone  += 1
 
+                instagram_url = lead.get("instagram_url")
+                facebook_url = lead.get("facebook_url")
+                if w_changed and lead.get("website") and not clean["website"]:
+                    try:
+                        host = urlparse(lead["website"]).netloc.lower().lstrip("www.")
+                    except Exception:
+                        host = ""
+                    if host == "instagram.com" and not instagram_url:
+                        instagram_url = lead["website"]
+                    if host == "facebook.com" and not facebook_url:
+                        facebook_url = lead["website"]
+
                 with get_connection() as conn:
                     conn.execute(
-                        "UPDATE leads SET website=?, email=?, phone=?, validated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (clean["website"], clean["email"], clean["phone"], lead["id"])
+                        """
+                        UPDATE leads
+                        SET website=?, email=?, phone=?, instagram_url=?, facebook_url=?,
+                            validated_at=CURRENT_TIMESTAMP
+                        WHERE id=?
+                        """,
+                        (clean["website"], clean["email"], clean["phone"], instagram_url, facebook_url, lead["id"])
                     )
                     conn.commit()
             else:
@@ -159,6 +183,137 @@ async def stream_validation(val_id: str):
 
     async def event_generator() -> AsyncGenerator[str, None]:
         queue = _validation_queues[val_id]
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30)
+            except asyncio.TimeoutError:
+                yield "data: {\"type\": \"ping\"}\n\n"
+                continue
+            if event.get("type") == "__done__":
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream",
+                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/leads/enrich")
+async def start_enrichment(req: ValidateRequest):
+    enrich_id = str(uuid.uuid4())[:8]
+    _enrichment_queues[enrich_id] = asyncio.Queue()
+    loop = asyncio.get_event_loop()
+
+    def run_enrichment():
+        from storage.database import get_connection
+
+        leads = get_all_leads()
+        targets = [l for l in leads if l["id"] in req.ids]
+        total = len(targets)
+        changed = 0
+        found_website = found_email = found_phone = found_social = 0
+
+        for i, lead in enumerate(targets, 1):
+            original = {
+                "website": lead.get("website"),
+                "email": lead.get("email"),
+                "phone": lead.get("phone"),
+                "instagram_url": lead.get("instagram_url"),
+                "facebook_url": lead.get("facebook_url"),
+            }
+
+            scraper_main._validate_and_enrich_studio(lead, enrich_email=True)
+
+            w_found = not original["website"] and bool(lead.get("website"))
+            e_found = not original["email"] and bool(lead.get("email"))
+            p_found = not original["phone"] and bool(lead.get("phone"))
+            social_found = (
+                (not original["instagram_url"] and bool(lead.get("instagram_url"))) or
+                (not original["facebook_url"] and bool(lead.get("facebook_url")))
+            )
+            any_changed = any(
+                lead.get(field) != original[field]
+                for field in original
+            )
+
+            if any_changed:
+                changed += 1
+                if w_found:
+                    found_website += 1
+                if e_found:
+                    found_email += 1
+                if p_found:
+                    found_phone += 1
+                if social_found:
+                    found_social += 1
+
+            with get_connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET website=?, email=?, phone=?, instagram_url=?, facebook_url=?,
+                        validated_at=CURRENT_TIMESTAMP
+                    WHERE id=?
+                    """,
+                    (
+                        lead.get("website"),
+                        lead.get("email"),
+                        lead.get("phone"),
+                        lead.get("instagram_url"),
+                        lead.get("facebook_url"),
+                        lead["id"],
+                    )
+                )
+                conn.commit()
+
+            details: list[str] = []
+            if w_found:
+                details.append("website encontrado")
+            if e_found:
+                details.append("email encontrado")
+            if p_found:
+                details.append("telefone encontrado")
+            if social_found:
+                details.append("social encontrado")
+
+            event = {
+                "type": "lead_enrich",
+                "id": lead["id"],
+                "name": lead.get("name", ""),
+                "index": i,
+                "total": total,
+                "changed": any_changed,
+                "website_found": w_found,
+                "email_found": e_found,
+                "phone_found": p_found,
+                "social_found": social_found,
+                "details": ", ".join(details),
+            }
+            loop.call_soon_threadsafe(_enrichment_queues[enrich_id].put_nowait, event)
+
+        done_event = {
+            "type": "enrichment_complete",
+            "total": total,
+            "changed": changed,
+            "found_website": found_website,
+            "found_email": found_email,
+            "found_phone": found_phone,
+            "found_social": found_social,
+        }
+        loop.call_soon_threadsafe(_enrichment_queues[enrich_id].put_nowait, done_event)
+        loop.call_soon_threadsafe(_enrichment_queues[enrich_id].put_nowait, {"type": "__done__"})
+
+    import threading
+    threading.Thread(target=run_enrichment, daemon=True).start()
+    return {"enrichment_id": enrich_id}
+
+
+@app.get("/api/leads/enrich/{enrich_id}/stream")
+async def stream_enrichment(enrich_id: str):
+    if enrich_id not in _enrichment_queues:
+        raise HTTPException(404, "Enrichment not found")
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        queue = _enrichment_queues[enrich_id]
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=30)
@@ -252,7 +407,11 @@ async def start_job(req: JobStartRequest):
             scraper_main.run(
                 progress_callback=callback,
                 cities_override=cities,
-                query_override=req.query
+                query_override=req.query,
+                enrich_email=req.enrich_email,
+                use_firecrawl=req.use_firecrawl,
+                auto_klaviyo=req.auto_klaviyo,
+                validate_and_enrich=req.validate_and_enrich,
             )
         except Exception as e:
             update_job(job_id, status="failed", error=str(e))
@@ -450,3 +609,38 @@ def status():
         "firecrawl": {"online": firecrawl_ok, "url": firecrawl_url},
         "serper": {"configured": bool(serper_key), "key_preview": serper_key[:8] + "..." if serper_key else ""},
     }
+
+
+# ── Frontend SPA ─────────────────────────────────────────────────────────────
+
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="atlas-assets")
+
+
+@app.get("/", include_in_schema=False)
+async def atlas_index():
+    index_file = DIST_DIR / "index.html"
+    if not index_file.exists():
+        raise HTTPException(503, "Atlas frontend build not found")
+    return FileResponse(index_file)
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def atlas_spa_fallback(full_path: str):
+    if full_path.startswith("api/"):
+        raise HTTPException(404, "Not found")
+
+    target = DIST_DIR / full_path
+    if full_path and target.is_file():
+        return FileResponse(target)
+
+    index_file = DIST_DIR / "index.html"
+    if not index_file.exists():
+        raise HTTPException(503, "Atlas frontend build not found")
+    return FileResponse(index_file)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("atlas.api.server:app", host="0.0.0.0", port=8000)

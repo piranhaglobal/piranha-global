@@ -7,6 +7,8 @@ export interface Lead {
   phone: string | null
   website: string | null
   email: string | null
+  instagram_url: string | null
+  facebook_url: string | null
   rating: number | null
   total_reviews: number | null
   business_status: 'OPERATIONAL' | 'CLOSED_TEMPORARILY' | 'CLOSED_PERMANENTLY'
@@ -40,6 +42,8 @@ export interface SSEEvent {
   leads_with_email?: number
   total_leads?: number
   klaviyo_synced?: number
+  validated_count?: number
+  enriched_count?: number
   error?: string
 }
 

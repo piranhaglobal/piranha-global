@@ -8,15 +8,15 @@ PLACES_TEXT_SEARCH_URL = "https://maps.googleapis.com/maps/api/place/textsearch/
 PLACES_DETAILS_URL = "https://maps.googleapis.com/maps/api/place/details/json"
 
 
-def search_studios_in_city(city: str, api_key: str) -> list[dict]:
+def search_studios_in_city(city: str, api_key: str, query: str | None = None) -> list[dict]:
     """
     Searches for tattoo studios in a given city using Google Places Text Search.
     Handles pagination to collect up to RESULTS_PER_CITY results.
     """
     studios = []
-    query = f"{SEARCH_QUERY} en {city}, España"
+    search_query = f"{query or SEARCH_QUERY} en {city}, España"
     params = {
-        "query": query,
+        "query": search_query,
         "key": api_key,
         "language": "es",
         "region": "es",

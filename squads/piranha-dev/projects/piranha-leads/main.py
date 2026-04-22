@@ -1,6 +1,8 @@
 import os
 import sys
 import time
+from datetime import datetime
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -11,12 +13,82 @@ from collectors.email_extractor import extract_email_from_website
 from collectors.directory_paginasamarillas import collect_from_paginasamarillas
 from collectors.firecrawl_extractor import firecrawl_available
 from collectors.instagram_extractor import extract_email_from_instagram
-from collectors.google_search_extractor import search_email_for_lead
+from collectors.google_search_extractor import search_contact_info_for_lead, search_email_for_lead
 from storage.database import init_db, upsert_lead, export_csv, get_unsynced_leads, mark_leads_synced
 from integrations.klaviyo import sync_leads_to_klaviyo
+from validators.contact_validator import validate_lead_contacts
 
 
-def run(progress_callback=None, cities_override=None, query_override=None):
+def _social_bucket_for_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    try:
+        host = urlparse(url).netloc.lower().lstrip("www.")
+    except Exception:
+        return None
+    if host == "instagram.com":
+        return "instagram_url"
+    if host == "facebook.com":
+        return "facebook_url"
+    return None
+
+
+def _store_social_link(studio: dict, url: str | None) -> bool:
+    bucket = _social_bucket_for_url(url)
+    if not bucket or not url or studio.get(bucket):
+        return False
+    studio[bucket] = url
+    return True
+
+
+def _validate_and_enrich_studio(studio: dict, enrich_email: bool = True) -> bool:
+    changed = False
+
+    if _store_social_link(studio, studio.get("website")):
+        studio["website"] = None
+        changed = True
+
+    initial_clean = validate_lead_contacts(studio)["clean"]
+    for field in ("website", "email", "phone"):
+        if studio.get(field) != initial_clean[field]:
+            studio[field] = initial_clean[field]
+            changed = True
+
+    search_result = search_contact_info_for_lead(studio.get("name", ""), studio.get("city", ""))
+    if not studio.get("email") and enrich_email and search_result.get("email"):
+        studio["email"] = search_result["email"]
+        changed = True
+    if not studio.get("phone") and search_result.get("phone"):
+        studio["phone"] = search_result["phone"]
+        changed = True
+    if not studio.get("website") and search_result.get("website"):
+        studio["website"] = search_result["website"]
+        changed = True
+
+    if _store_social_link(studio, search_result.get("instagram_url")):
+        changed = True
+    if _store_social_link(studio, search_result.get("facebook_url")):
+        changed = True
+
+    final_clean = validate_lead_contacts(studio)["clean"]
+    for field in ("website", "email", "phone"):
+        if studio.get(field) != final_clean[field]:
+            studio[field] = final_clean[field]
+            changed = True
+
+    studio["validated_at"] = datetime.utcnow().isoformat()
+    return changed
+
+
+def run(
+    progress_callback=None,
+    cities_override=None,
+    query_override=None,
+    enrich_email=True,
+    use_firecrawl=None,
+    auto_klaviyo=True,
+    validate_and_enrich=False,
+):
     from config import SEARCH_QUERY
     api_key = os.getenv("GOOGLE_PLACES_API_KEY")
     if not api_key:
@@ -28,16 +100,26 @@ def run(progress_callback=None, cities_override=None, query_override=None):
     cities = cities_override if cities_override else SPAIN_CITIES
     query = query_override if query_override else SEARCH_QUERY
 
-    use_firecrawl = firecrawl_available()
+    firecrawl_online = firecrawl_available()
+    if use_firecrawl is None:
+        use_firecrawl = firecrawl_online
+    else:
+        use_firecrawl = bool(use_firecrawl and firecrawl_online)
+
     if use_firecrawl:
         print("Firecrawl detectado — fallback de email e Páginas Amarillas ativos.\n")
     else:
-        print("Firecrawl nao detectado — usando apenas Google Places + extrator simples.\n")
-        print("  Para ativar: docker-compose up -d\n")
+        if firecrawl_online:
+            print("Firecrawl disponível mas desativado — usando apenas Google Places + extrator simples.\n")
+        else:
+            print("Firecrawl nao detectado — usando apenas Google Places + extrator simples.\n")
+            print("  Para ativar: docker-compose up -d\n")
 
     total_leads = 0
     total_with_email = 0
     total_with_phone = 0
+    total_validated = 0
+    total_enriched = 0
 
     print(f"Iniciando coleta em {len(cities)} capitais de província da Espanha...")
     print(f"Critério: {MIN_REVIEWS}+ reviews · máx {MAX_LEADS_PER_CITY} studios por cidade\n")
@@ -52,7 +134,7 @@ def run(progress_callback=None, cities_override=None, query_override=None):
 
         # --- Fonte 1: Google Places ---
         try:
-            places_results = search_studios_in_city(city, api_key)
+            places_results = search_studios_in_city(city, api_key, query=query)
             for s in places_results:
                 s["source"] = "google_places"
             all_studios.extend(places_results)
@@ -104,7 +186,7 @@ def run(progress_callback=None, cities_override=None, query_override=None):
                     print(f"    [!] Details erro para '{name}': {e}")
 
             # Extração de email via website
-            if studio.get("website"):
+            if enrich_email and studio.get("website"):
                 try:
                     studio["email"] = extract_email_from_website(
                         studio["website"],
@@ -114,7 +196,7 @@ def run(progress_callback=None, cities_override=None, query_override=None):
                     print(f"    [!] Email erro para '{name}': {e}")
 
             # Fallback: Instagram bio scraping (quando website não tem email)
-            if not studio.get("email") and studio.get("website"):
+            if enrich_email and not studio.get("email") and studio.get("website"):
                 try:
                     ig_email = extract_email_from_instagram(studio["website"])
                     if ig_email:
@@ -123,7 +205,7 @@ def run(progress_callback=None, cities_override=None, query_override=None):
                     print(f"    [!] Instagram scraping erro para '{name}': {e}")
 
             # Fallback: Search-based discovery (Facebook/Instagram via DuckDuckGo)
-            if not studio.get("email"):
+            if enrich_email and not studio.get("email"):
                 try:
                     searched_email = search_email_for_lead(name, city)
                     if searched_email:
@@ -131,6 +213,14 @@ def run(progress_callback=None, cities_override=None, query_override=None):
                         print(f"    [search] Email encontrado via pesquisa: {searched_email}")
                 except Exception as e:
                     print(f"    [!] Search email erro para '{name}': {e}")
+
+            if validate_and_enrich:
+                try:
+                    if _validate_and_enrich_studio(studio, enrich_email=enrich_email):
+                        total_enriched += 1
+                    total_validated += 1
+                except Exception as e:
+                    print(f"    [!] Validate/enrich erro para '{name}': {e}")
 
             # Garante que place_id de diretórios não colidam com os do Google
             if not studio.get("place_id"):
@@ -140,10 +230,13 @@ def run(progress_callback=None, cities_override=None, query_override=None):
             studio.setdefault("email", None)
             studio.setdefault("phone", None)
             studio.setdefault("website", None)
+            studio.setdefault("instagram_url", None)
+            studio.setdefault("facebook_url", None)
             studio.setdefault("rating", None)
             studio.setdefault("total_reviews", None)
             studio.setdefault("business_status", "OPERATIONAL")
             studio.setdefault("source", "unknown")
+            studio.setdefault("validated_at", None)
 
             upsert_lead(studio)
             total_leads += 1
@@ -178,6 +271,9 @@ def run(progress_callback=None, cities_override=None, query_override=None):
     print(f"  Total de leads:        {total_leads}")
     print(f"  Com telefone:          {total_with_phone} ({_pct(total_with_phone, total_leads)}%)")
     print(f"  Com email:             {total_with_email} ({_pct(total_with_email, total_leads)}%)")
+    if validate_and_enrich:
+        print(f"  Validados:             {total_validated}")
+        print(f"  Enriquecidos:          {total_enriched}")
     print("=" * 60)
 
     export_csv()
@@ -185,7 +281,7 @@ def run(progress_callback=None, cities_override=None, query_override=None):
     # --- Klaviyo sync ---
     klaviyo_list_id = os.getenv("KLAVIYO_LIST_ID", "S9Qa55")
     klaviyo_key = os.getenv("KLAVIYO_PRIVATE_API_KEY")
-    if klaviyo_key:
+    if auto_klaviyo and klaviyo_key:
         if progress_callback:
             progress_callback("klaviyo_start", {"total_leads": total_leads})
         print("\nSincronizando leads novos com Klaviyo...")
@@ -197,15 +293,33 @@ def run(progress_callback=None, cities_override=None, query_override=None):
                 mark_leads_synced(synced_ids)
             print(f"  Klaviyo: {result['synced']} sincronizados, {result['skipped']} sem contacto.")
             if progress_callback:
-                progress_callback("job_complete", {"total_leads": total_leads, "klaviyo_synced": result.get("synced", 0)})
+                progress_callback("job_complete", {
+                    "total_leads": total_leads,
+                    "klaviyo_synced": result.get("synced", 0),
+                    "validated_count": total_validated,
+                    "enriched_count": total_enriched,
+                })
         else:
             print("  Klaviyo: nenhum lead novo para sincronizar.")
             if progress_callback:
-                progress_callback("job_complete", {"total_leads": total_leads, "klaviyo_synced": 0})
+                progress_callback("job_complete", {
+                    "total_leads": total_leads,
+                    "klaviyo_synced": 0,
+                    "validated_count": total_validated,
+                    "enriched_count": total_enriched,
+                })
     else:
-        print("\n[!] KLAVIYO_PRIVATE_API_KEY não definida — sync ignorado.")
+        if auto_klaviyo:
+            print("\n[!] KLAVIYO_PRIVATE_API_KEY não definida — sync ignorado.")
+        else:
+            print("\nKlaviyo sync automático desativado.")
         if progress_callback:
-            progress_callback("job_complete", {"total_leads": total_leads, "klaviyo_synced": 0})
+            progress_callback("job_complete", {
+                "total_leads": total_leads,
+                "klaviyo_synced": 0,
+                "validated_count": total_validated,
+                "enriched_count": total_enriched,
+            })
 
 
 def _pct(part: int, total: int) -> int:
