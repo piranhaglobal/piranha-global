@@ -1,6 +1,7 @@
 export interface Lead {
   id: number
   place_id: string
+  job_id: string | null
   name: string
   city: string
   address: string | null
@@ -53,9 +54,17 @@ export interface KlaviyoSyncResult {
   jobs: Array<{ job_id: string; size: number; status: string }>
 }
 
+export interface KlaviyoList {
+  id: string
+  name: string
+  source?: string
+  created?: string | null
+  updated?: string | null
+}
+
 export interface StatusResponse {
   google_places: { configured: boolean; key_preview: string }
-  klaviyo: { configured: boolean; list_id: string }
+  klaviyo: { configured: boolean; list_id: string; lists: KlaviyoList[] }
   firecrawl: { online: boolean; url: string }
   serper: { configured: boolean; key_preview: string }
 }

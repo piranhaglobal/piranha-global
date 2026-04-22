@@ -84,6 +84,7 @@ def run(
     progress_callback=None,
     cities_override=None,
     query_override=None,
+    job_id=None,
     enrich_email=True,
     use_firecrawl=None,
     auto_klaviyo=True,
@@ -236,6 +237,7 @@ def run(
             studio.setdefault("total_reviews", None)
             studio.setdefault("business_status", "OPERATIONAL")
             studio.setdefault("source", "unknown")
+            studio.setdefault("job_id", job_id)
             studio.setdefault("validated_at", None)
 
             upsert_lead(studio)

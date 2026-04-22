@@ -28,7 +28,8 @@ export const EUROPEAN_COUNTRIES: Country[] = [
     cities: [
       'Lisboa', 'Porto', 'Braga', 'Coimbra', 'Aveiro', 'Faro', 'Setúbal', 'Funchal',
       'Ponta Delgada', 'Viseu', 'Leiria', 'Évora', 'Beja', 'Viana do Castelo', 'Guimarães',
-      'Vila Nova de Gaia', 'Amadora', 'Almada', 'Loures', 'Matosinhos',
+      'Vila Real', 'Bragança', 'Castelo Branco', 'Portalegre', 'Santarém', 'Almada',
+      'Covilhã', 'Barcelos', 'Lagos',
     ],
   },
   {

@@ -7,6 +7,7 @@ import { formatDuration } from '../../lib/utils'
 interface Props {
   jobs: ScraperJob[]
   loading: boolean
+  onSelectJob?: (job: ScraperJob) => void
 }
 
 function StatusChip({ status }: { status: ScraperJob['status'] }) {
@@ -34,7 +35,7 @@ function StatusChip({ status }: { status: ScraperJob['status'] }) {
   )
 }
 
-export default function JobFeed({ jobs, loading }: Props) {
+export default function JobFeed({ jobs, loading, onSelectJob }: Props) {
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 20, color: 'var(--color-text-secondary)', fontSize: 13 }}>
@@ -65,6 +66,7 @@ export default function JobFeed({ jobs, loading }: Props) {
         return (
           <div
             key={job.id}
+            onClick={() => onSelectJob?.(job)}
             style={{
               background: 'var(--color-bg-surface)',
               border: '1px solid var(--color-border)',
@@ -73,6 +75,7 @@ export default function JobFeed({ jobs, loading }: Props) {
               display: 'flex',
               gap: 12,
               alignItems: 'flex-start',
+              cursor: onSelectJob ? 'pointer' : 'default',
             }}
           >
             {/* Left: status icon */}

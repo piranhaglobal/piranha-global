@@ -24,10 +24,11 @@ sys.path.insert(0, str(BASE_DIR))
 load_dotenv(BASE_DIR / ".env", override=True)
 
 from storage.database import (
-    init_db, get_all_leads, get_unsynced_leads, mark_leads_synced,
+    init_db, get_all_leads, get_leads_for_job, get_unsynced_leads, mark_leads_synced,
     create_job, get_job, get_all_jobs, update_job, init_jobs_table
 )
-from integrations.klaviyo import sync_leads_to_klaviyo
+from storage.klaviyo_lists import load_klaviyo_lists, upsert_klaviyo_list, delete_klaviyo_list
+from integrations.klaviyo import get_list_details, sync_leads_to_klaviyo
 import main as scraper_main
 
 app = FastAPI(title="Piranha Atlas API")
@@ -334,6 +335,15 @@ class DeleteLeadsRequest(BaseModel):
     ids: list[int]
 
 
+class KlaviyoListRequest(BaseModel):
+    list_id: str
+
+
+class KlaviyoSyncSelectedRequest(BaseModel):
+    ids: list[int]
+    list_id: str
+
+
 @app.delete("/api/leads")
 def delete_leads(req: DeleteLeadsRequest):
     if not req.ids:
@@ -353,6 +363,11 @@ def get_lead(lead_id: int):
     if not lead:
         raise HTTPException(404, "Lead not found")
     return lead
+
+
+@app.get("/api/jobs/{job_id}/leads")
+def get_job_leads_endpoint(job_id: str):
+    return get_leads_for_job(job_id)
 
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────
@@ -408,6 +423,7 @@ async def start_job(req: JobStartRequest):
                 progress_callback=callback,
                 cities_override=cities,
                 query_override=req.query,
+                job_id=job_id,
                 enrich_email=req.enrich_email,
                 use_firecrawl=req.use_firecrawl,
                 auto_klaviyo=req.auto_klaviyo,
@@ -496,6 +512,37 @@ def klaviyo_clear_list():
     return {"removed": removed, "list_id": list_id}
 
 
+@app.get("/api/klaviyo/lists")
+def klaviyo_lists():
+    configured = load_klaviyo_lists()
+    default_list_id = os.getenv("KLAVIYO_LIST_ID", "S9Qa55")
+    if default_list_id and not any(item["id"] == default_list_id for item in configured):
+        try:
+            configured = upsert_klaviyo_list({
+                **get_list_details(default_list_id),
+                "source": "env",
+            })
+        except Exception:
+            pass
+    return {"lists": configured, "default_list_id": default_list_id}
+
+
+@app.post("/api/klaviyo/lists")
+def klaviyo_add_list(req: KlaviyoListRequest):
+    details = get_list_details(req.list_id.strip())
+    lists = upsert_klaviyo_list({
+        **details,
+        "source": "manual",
+    })
+    return {"lists": lists, "added": details}
+
+
+@app.delete("/api/klaviyo/lists/{list_id}")
+def klaviyo_remove_list(list_id: str):
+    lists = delete_klaviyo_list(list_id)
+    return {"lists": lists, "removed": list_id}
+
+
 @app.post("/api/klaviyo/sync")
 def klaviyo_sync():
     list_id = os.getenv("KLAVIYO_LIST_ID", "S9Qa55")
@@ -505,6 +552,18 @@ def klaviyo_sync():
     result = sync_leads_to_klaviyo(unsynced, list_id)
     if result["synced"] > 0:
         mark_leads_synced([l["id"] for l in unsynced])
+    return result
+
+
+@app.post("/api/klaviyo/sync-selected")
+def klaviyo_sync_selected(req: KlaviyoSyncSelectedRequest):
+    if not req.ids:
+        return {"synced": 0, "skipped": 0, "jobs": []}
+    leads = [lead for lead in get_all_leads() if lead["id"] in req.ids]
+    result = sync_leads_to_klaviyo(leads, req.list_id)
+    if result["synced"] > 0:
+        synced_ids = [lead["id"] for lead in leads if lead.get("email") or lead.get("phone")]
+        mark_leads_synced(synced_ids)
     return result
 
 
@@ -605,7 +664,11 @@ def status():
 
     return {
         "google_places": {"configured": bool(google_key), "key_preview": google_key[:8] + "..." if google_key else ""},
-        "klaviyo": {"configured": bool(klaviyo_key), "list_id": os.getenv("KLAVIYO_LIST_ID", "S9Qa55")},
+        "klaviyo": {
+            "configured": bool(klaviyo_key),
+            "list_id": os.getenv("KLAVIYO_LIST_ID", "S9Qa55"),
+            "lists": load_klaviyo_lists(),
+        },
         "firecrawl": {"online": firecrawl_ok, "url": firecrawl_url},
         "serper": {"configured": bool(serper_key), "key_preview": serper_key[:8] + "..." if serper_key else ""},
     }

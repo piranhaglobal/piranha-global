@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { CheckCircle, XCircle, Loader, Key, Zap, Globe, RefreshCw, Terminal, Search, Mail, Trash2 } from 'lucide-react'
-import type { StatusResponse, ScraperJob } from '../../types'
-import { fetchStatus, fetchJobs, triggerKlaviyoSync } from '../../services/klaviyoService'
-import KlaviyoSyncBar from '../ui/KlaviyoSyncBar'
-import type { KlaviyoSyncResult } from '../../types'
+import type { KlaviyoList, StatusResponse, ScraperJob } from '../../types'
+import { addKlaviyoList, fetchJobs, fetchKlaviyoLists, fetchStatus, removeKlaviyoList } from '../../services/klaviyoService'
 
 function StatusDot({ ok }: { ok: boolean }) {
   return ok
@@ -66,8 +64,10 @@ export default function Settings() {
   const [status, setStatus] = useState<StatusResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [recentJobs, setRecentJobs] = useState<ScraperJob[]>([])
-  const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<KlaviyoSyncResult | null>(null)
+  const [listInput, setListInput] = useState('')
+  const [listSaving, setListSaving] = useState(false)
+  const [listMessage, setListMessage] = useState<string | null>(null)
+  const [klaviyoLists, setKlaviyoLists] = useState<KlaviyoList[]>([])
   const [clearing, setClearing] = useState(false)
   const [clearResult, setClearResult] = useState<{ removed: number } | null>(null)
   const [clearConfirm, setClearConfirm] = useState(false)
@@ -79,8 +79,9 @@ export default function Settings() {
   async function load() {
     setLoading(true)
     try {
-      const [s, j] = await Promise.all([fetchStatus(), fetchJobs()])
+      const [s, j, klaviyoData] = await Promise.all([fetchStatus(), fetchJobs(), fetchKlaviyoLists()])
       setStatus(s)
+      setKlaviyoLists(klaviyoData.lists ?? [])
       setRecentJobs(j.slice(0, 5))
     } catch { /* silent */ }
     finally { setLoading(false) }
@@ -88,14 +89,29 @@ export default function Settings() {
 
   useEffect(() => { load() }, [])
 
-  async function handleSync() {
-    setSyncing(true)
-    setSyncResult(null)
+  async function handleAddList() {
+    if (!listInput.trim()) return
+    setListSaving(true)
+    setListMessage(null)
     try {
-      const result = await triggerKlaviyoSync()
-      setSyncResult(result)
-    } catch { /* silent */ }
-    finally { setSyncing(false) }
+      const result = await addKlaviyoList(listInput.trim())
+      setKlaviyoLists(result.lists)
+      setListMessage(`Lista adicionada: ${result.added.name}`)
+      setListInput('')
+    } catch {
+      setListMessage('Não foi possível importar esta List ID.')
+    } finally {
+      setListSaving(false)
+    }
+  }
+
+  async function handleRemoveList(listId: string) {
+    try {
+      const result = await removeKlaviyoList(listId)
+      setKlaviyoLists(result.lists)
+    } catch {
+      setListMessage('Não foi possível remover a lista.')
+    }
   }
 
   async function handleClearList() {
@@ -219,7 +235,90 @@ export default function Settings() {
         <Row label="List ID" value={status?.klaviyo.list_id ?? '—'} mono />
 
         <div style={{ marginTop: 16 }}>
-          <KlaviyoSyncBar syncing={syncing} result={syncResult} onSync={handleSync} />
+          <div style={{ color: 'var(--color-text-secondary)', fontSize: 12, marginBottom: 8 }}>
+            Listas disponíveis no Atlas para sync manual a partir do Studio Database
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <input
+              value={listInput}
+              onChange={e => setListInput(e.target.value)}
+              placeholder="Adicionar List ID do Klaviyo"
+              style={{
+                flex: 1,
+                background: 'var(--color-bg-surface)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-primary)',
+                padding: '8px 10px',
+                borderRadius: 6,
+                fontSize: 13,
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={handleAddList}
+              disabled={listSaving || !listInput.trim()}
+              style={{
+                padding: '8px 12px',
+                background: listSaving || !listInput.trim() ? 'var(--color-bg-surface)' : 'var(--color-accent)',
+                border: 'none',
+                color: listSaving || !listInput.trim() ? 'var(--color-text-secondary)' : '#fff',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: listSaving || !listInput.trim() ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {listSaving ? 'A validar...' : 'Importar List ID'}
+            </button>
+          </div>
+
+          {listMessage && (
+            <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              {listMessage}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {klaviyoLists.length === 0 && (
+              <div style={{ padding: '10px 12px', border: '1px dashed var(--color-border)', borderRadius: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                Ainda não há listas importadas no Atlas.
+              </div>
+            )}
+            {klaviyoLists.map(list => (
+              <div key={list.id} style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+                padding: '10px 12px',
+                background: 'var(--color-bg-surface)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 8,
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>{list.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', marginTop: 3 }}>
+                    {list.id}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleRemoveList(list.id)}
+                  style={{
+                    padding: '6px 10px',
+                    background: 'rgba(239,68,68,0.08)',
+                    border: '1px solid rgba(239,68,68,0.25)',
+                    color: '#F87171',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Remover
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--color-border-subtle)' }}>

@@ -101,6 +101,23 @@ def _wait_for_job(job_id: str, max_wait: int = 120) -> str:
     return "timeout"
 
 
+def get_list_details(list_id: str) -> dict:
+    resp = requests.get(
+        f"{KLAVIYO_API_BASE}/lists/{list_id}/",
+        headers=_headers(),
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()["data"]
+    attrs = data.get("attributes", {})
+    return {
+        "id": data["id"],
+        "name": attrs.get("name") or data["id"],
+        "created": attrs.get("created"),
+        "updated": attrs.get("updated"),
+    }
+
+
 def sync_leads_to_klaviyo(leads: list[dict], list_id: str) -> dict:
     """
     Syncs a list of leads to a Klaviyo list via bulk import.

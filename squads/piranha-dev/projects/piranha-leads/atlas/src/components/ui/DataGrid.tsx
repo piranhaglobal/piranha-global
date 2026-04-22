@@ -12,6 +12,7 @@ interface Props {
   selectedIds: Set<number>
   onToggleSelect: (id: number) => void
   onToggleAll: () => void
+  selectable?: boolean
 }
 
 function SourceBadge({ source }: { source: string }) {
@@ -59,11 +60,19 @@ function RatingBar({ rating }: { rating: number | null }) {
   )
 }
 
-export default function DataGrid({ leads, onSelectLead, selectedIds, onToggleSelect, onToggleAll }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>('city')
-  const [sortDir, setSortDir] = useState<SortDir>('asc')
+type ExtendedSortKey = SortKey | 'created_at'
 
-  function handleSort(key: SortKey) {
+function formatCreatedAt(value: string) {
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T')
+  const parsed = new Date(normalized)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('pt-PT')
+}
+
+export default function DataGrid({ leads, onSelectLead, selectedIds, onToggleSelect, onToggleAll, selectable = true }: Props) {
+  const [sortKey, setSortKey] = useState<ExtendedSortKey>('created_at')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  function handleSort(key: ExtendedSortKey) {
     if (sortKey === key) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc')
     } else {
@@ -83,7 +92,7 @@ export default function DataGrid({ leads, onSelectLead, selectedIds, onToggleSel
 
   const allSelected = leads.length > 0 && leads.every(l => selectedIds.has(l.id))
 
-  function SortIcon({ col }: { col: SortKey }) {
+  function SortIcon({ col }: { col: ExtendedSortKey }) {
     if (sortKey !== col) return <ChevronUp size={12} style={{ opacity: 0.3 }} />
     return sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
   }
@@ -108,14 +117,16 @@ export default function DataGrid({ leads, onSelectLead, selectedIds, onToggleSel
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr>
-            <th style={{ ...thStyle, width: 36 }}>
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={onToggleAll}
-                style={{ accentColor: 'var(--color-accent)', cursor: 'pointer' }}
-              />
-            </th>
+            {selectable && (
+              <th style={{ ...thStyle, width: 36 }}>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={onToggleAll}
+                  style={{ accentColor: 'var(--color-accent)', cursor: 'pointer' }}
+                />
+              </th>
+            )}
             <th style={{ ...thStyle, cursor: 'pointer' }} onClick={() => handleSort('name')}>
               <span className="flex items-center gap-1">Nome <SortIcon col="name" /></span>
             </th>
@@ -131,6 +142,9 @@ export default function DataGrid({ leads, onSelectLead, selectedIds, onToggleSel
             <th style={thStyle}>Telefone</th>
             <th style={thStyle}>Email</th>
             <th style={thStyle}>Fonte</th>
+            <th style={{ ...thStyle, cursor: 'pointer' }} onClick={() => handleSort('created_at')}>
+              <span className="flex items-center gap-1">Criado em <SortIcon col="created_at" /></span>
+            </th>
             <th style={thStyle}>Validado</th>
             <th style={thStyle}>Klaviyo</th>
             <th style={{ ...thStyle, width: 36 }}></th>
@@ -157,14 +171,16 @@ export default function DataGrid({ leads, onSelectLead, selectedIds, onToggleSel
                   if (!isSelected) (e.currentTarget as HTMLElement).style.background = isEven ? 'transparent' : 'rgba(255,255,255,0.01)'
                 }}
               >
-                <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-subtle)' }}>
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => onToggleSelect(lead.id)}
-                    style={{ accentColor: 'var(--color-accent)', cursor: 'pointer' }}
-                  />
-                </td>
+                {selectable && (
+                  <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-subtle)' }}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => onToggleSelect(lead.id)}
+                      style={{ accentColor: 'var(--color-accent)', cursor: 'pointer' }}
+                    />
+                  </td>
+                )}
                 <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-subtle)', maxWidth: 200 }}>
                   <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }} className="truncate block">
                     {lead.name}
@@ -217,6 +233,9 @@ export default function DataGrid({ leads, onSelectLead, selectedIds, onToggleSel
                 </td>
                 <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-subtle)' }}>
                   <SourceBadge source={lead.source} />
+                </td>
+                <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-subtle)', fontSize: 12, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+                  {formatCreatedAt(lead.created_at)}
                 </td>
                 <td style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border-subtle)', textAlign: 'center' }}>
                   {lead.validated_at ? (
@@ -277,7 +296,7 @@ export default function DataGrid({ leads, onSelectLead, selectedIds, onToggleSel
           })}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={11} style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+              <td colSpan={selectable ? 12 : 11} style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-secondary)' }}>
                 Nenhum lead encontrado com os filtros actuais.
               </td>
             </tr>

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS leads (
     source        TEXT DEFAULT 'google_places',
     status        TEXT DEFAULT 'new',
     klaviyo_synced INTEGER DEFAULT 0,
+    job_id        TEXT,
     instagram_url TEXT,
     facebook_url  TEXT,
     validated_at  DATETIME,
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS leads (
 
 MIGRATIONS = [
     "ALTER TABLE leads ADD COLUMN klaviyo_synced INTEGER DEFAULT 0",
+    "ALTER TABLE leads ADD COLUMN job_id TEXT",
     "ALTER TABLE leads ADD COLUMN instagram_url TEXT",
     "ALTER TABLE leads ADD COLUMN facebook_url TEXT",
     "ALTER TABLE leads ADD COLUMN validated_at DATETIME",
@@ -65,16 +67,17 @@ def upsert_lead(lead: dict):
     sql = """
     INSERT INTO leads (
         place_id, name, city, address, phone, website, email, rating,
-        total_reviews, business_status, source, instagram_url, facebook_url, validated_at
+        total_reviews, business_status, source, job_id, instagram_url, facebook_url, validated_at
     )
     VALUES (
         :place_id, :name, :city, :address, :phone, :website, :email, :rating,
-        :total_reviews, :business_status, :source, :instagram_url, :facebook_url, :validated_at
+        :total_reviews, :business_status, :source, :job_id, :instagram_url, :facebook_url, :validated_at
     )
     ON CONFLICT(place_id) DO UPDATE SET
         phone    = COALESCE(excluded.phone, leads.phone),
         website  = COALESCE(excluded.website, leads.website),
         email    = COALESCE(excluded.email, leads.email),
+        job_id = COALESCE(excluded.job_id, leads.job_id),
         instagram_url = COALESCE(excluded.instagram_url, leads.instagram_url),
         facebook_url  = COALESCE(excluded.facebook_url, leads.facebook_url),
         validated_at = COALESCE(excluded.validated_at, leads.validated_at),
@@ -88,7 +91,16 @@ def upsert_lead(lead: dict):
 
 def get_all_leads() -> list[dict]:
     with get_connection() as conn:
-        rows = conn.execute("SELECT * FROM leads ORDER BY city, name").fetchall()
+        rows = conn.execute("SELECT * FROM leads ORDER BY created_at DESC, id DESC").fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_leads_for_job(job_id: str) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM leads WHERE job_id = ? ORDER BY created_at DESC, id DESC",
+            (job_id,),
+        ).fetchall()
         return [dict(row) for row in rows]
 
 

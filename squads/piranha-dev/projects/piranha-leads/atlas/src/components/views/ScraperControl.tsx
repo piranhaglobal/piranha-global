@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { Play, MapPin, Search, Mail, Globe, Zap, CheckSquare, Square, Loader, ChevronDown, ChevronUp } from 'lucide-react'
-import type { ScraperJob, SSEEvent } from '../../types'
-import { startJob, fetchJobs, triggerKlaviyoSync } from '../../services/klaviyoService'
+import { Play, MapPin, Search, Mail, CheckSquare, Square, Loader, ChevronDown, ChevronUp, X } from 'lucide-react'
+import type { Lead, ScraperJob, SSEEvent } from '../../types'
+import { startJob, fetchJobLeads, fetchJobs } from '../../services/klaviyoService'
 import JobFeed from '../ui/JobFeed'
-import KlaviyoSyncBar from '../ui/KlaviyoSyncBar'
-import type { KlaviyoSyncResult } from '../../types'
 import { EUROPEAN_COUNTRIES, getCitiesForCountries } from '../../data/europeanCities'
+import DataGrid from '../ui/DataGrid'
+import LeadDrawer from '../ui/LeadDrawer'
 
 interface ProgressState {
   currentCity: string | null
@@ -25,11 +25,7 @@ export default function ScraperControl() {
     () => getCitiesForCountries(['ES'])
   )
   const [enrichEmail, setEnrichEmail] = useState(true)
-  const [useFirecrawl, setUseFirecrawl] = useState(false)
-  const [validateAndEnrich, setValidateAndEnrich] = useState(true)
-  const [autoKlaviyo, setAutoKlaviyo] = useState(true)
   const [running, setRunning] = useState(false)
-  const [runningJobId, setRunningJobId] = useState<string | null>(null)
   const [progress, setProgress] = useState<ProgressState>({
     currentCity: null, cityIndex: 0, totalCities: 0, leadsFound: 0, leadsWithEmail: 0,
     validatedCount: 0, enrichedCount: 0, phase: 'idle',
@@ -37,8 +33,10 @@ export default function ScraperControl() {
   const [sseLog, setSseLog] = useState<SSEEvent[]>([])
   const [jobs, setJobs] = useState<ScraperJob[]>([])
   const [jobsLoading, setJobsLoading] = useState(true)
-  const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<KlaviyoSyncResult | null>(null)
+  const [jobLeads, setJobLeads] = useState<Lead[]>([])
+  const [jobLeadsLoading, setJobLeadsLoading] = useState(false)
+  const [selectedJob, setSelectedJob] = useState<ScraperJob | null>(null)
+  const [drawerLead, setDrawerLead] = useState<Lead | null>(null)
   const [expandedCountries, setExpandedCountries] = useState<string[]>(['ES'])
   const esRef = useRef<EventSource | null>(null)
 
@@ -110,11 +108,10 @@ export default function ScraperControl() {
         query,
         cities: selectedCities,
         enrich_email: enrichEmail,
-        use_firecrawl: useFirecrawl,
-        validate_and_enrich: validateAndEnrich,
-        auto_klaviyo: autoKlaviyo,
+        use_firecrawl: false,
+        validate_and_enrich: false,
+        auto_klaviyo: false,
       })
-      setRunningJobId(job_id)
 
       const es = new EventSource(`/api/jobs/${job_id}/stream`)
       esRef.current = es
@@ -147,10 +144,6 @@ export default function ScraperControl() {
             }))
           }
 
-          if (event.type === 'klaviyo_start') {
-            setProgress(p => ({ ...p, phase: 'klaviyo' }))
-          }
-
           if (event.type === 'job_complete' || event.type === '__done__') {
             setProgress(p => ({
               ...p,
@@ -160,7 +153,6 @@ export default function ScraperControl() {
               enrichedCount: event.enriched_count ?? p.enrichedCount,
             }))
             setRunning(false)
-            setRunningJobId(null)
             es.close()
             esRef.current = null
             loadJobs()
@@ -172,7 +164,6 @@ export default function ScraperControl() {
 
       es.onerror = () => {
         setRunning(false)
-        setRunningJobId(null)
         es.close()
         esRef.current = null
         loadJobs()
@@ -182,14 +173,18 @@ export default function ScraperControl() {
     }
   }
 
-  async function handleSync() {
-    setSyncing(true)
-    setSyncResult(null)
+  async function handleOpenJob(job: ScraperJob) {
+    setSelectedJob(job)
+    setJobLeadsLoading(true)
+    setJobLeads([])
     try {
-      const result = await triggerKlaviyoSync()
-      setSyncResult(result)
-    } catch { /* silent */ }
-    finally { setSyncing(false) }
+      const leads = await fetchJobLeads(job.id)
+      setJobLeads(leads)
+    } catch {
+      setJobLeads([])
+    } finally {
+      setJobLeadsLoading(false)
+    }
   }
 
   const pct = progress.totalCities > 0
@@ -273,30 +268,6 @@ export default function ScraperControl() {
                 <Mail size={13} />
                 Enriquecer emails
                 {enrichEmail ? <CheckSquare size={13} style={{ marginLeft: 'auto' }} /> : <Square size={13} style={{ marginLeft: 'auto' }} />}
-              </button>
-              <button
-                onClick={() => !running && setValidateAndEnrich(v => !v)}
-                style={toggleStyle(validateAndEnrich)}
-              >
-                <CheckSquare size={13} />
-                Validar + enriquecer após extrair
-                {validateAndEnrich ? <CheckSquare size={13} style={{ marginLeft: 'auto' }} /> : <Square size={13} style={{ marginLeft: 'auto' }} />}
-              </button>
-              <button
-                onClick={() => !running && setUseFirecrawl(v => !v)}
-                style={toggleStyle(useFirecrawl)}
-              >
-                <Globe size={13} />
-                Usar Firecrawl
-                {useFirecrawl ? <CheckSquare size={13} style={{ marginLeft: 'auto' }} /> : <Square size={13} style={{ marginLeft: 'auto' }} />}
-              </button>
-              <button
-                onClick={() => !running && setAutoKlaviyo(v => !v)}
-                style={toggleStyle(autoKlaviyo)}
-              >
-                <Zap size={13} />
-                Auto-sync Klaviyo
-                {autoKlaviyo ? <CheckSquare size={13} style={{ marginLeft: 'auto' }} /> : <Square size={13} style={{ marginLeft: 'auto' }} />}
               </button>
             </div>
           </div>
@@ -485,7 +456,6 @@ export default function ScraperControl() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
                 {progress.phase === 'collecting' && `Processando: ${progress.currentCity ?? '...'}`}
-                {progress.phase === 'klaviyo' && 'Sincronizando com Klaviyo...'}
                 {progress.phase === 'done' && 'Extracção concluída'}
               </span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-secondary)' }}>
@@ -517,22 +487,6 @@ export default function ScraperControl() {
                   {progress.leadsWithEmail} ({emailPct}%)
                 </span>
               </div>
-              {validateAndEnrich && (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>Validados:</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                      {progress.validatedCount}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>Enriquecidos:</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600, color: 'var(--color-warning)' }}>
-                      {progress.enrichedCount}
-                    </span>
-                  </div>
-                </>
-              )}
             </div>
 
             {/* Last events log */}
@@ -555,8 +509,7 @@ export default function ScraperControl() {
                   <div key={i}>
                     {ev.type === 'city_start' && `→ ${ev.city}`}
                     {ev.type === 'city_progress' && `✓ ${ev.city}: ${ev.leads_found} leads, ${ev.leads_with_email} emails`}
-                    {ev.type === 'klaviyo_start' && '⚡ Iniciando sync Klaviyo...'}
-                    {ev.type === 'job_complete' && `✓ Concluído: ${ev.total_leads} leads, ${ev.validated_count ?? 0} validados, ${ev.enriched_count ?? 0} enriquecidos, ${ev.klaviyo_synced} Klaviyo`}
+                    {ev.type === 'job_complete' && `✓ Concluído: ${ev.total_leads} leads`}
                   </div>
                 ))}
               </div>
@@ -564,19 +517,89 @@ export default function ScraperControl() {
           </div>
         )}
 
-        {/* Klaviyo bar */}
-        <div style={{ padding: '12px 24px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
-          <KlaviyoSyncBar syncing={syncing} result={syncResult} onSync={handleSync} />
-        </div>
-
         {/* Jobs feed */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 14, fontWeight: 600, fontFamily: 'var(--font-display)', color: 'var(--color-text-primary)' }}>
             Histórico de Jobs
           </h3>
-          <JobFeed jobs={jobs} loading={jobsLoading} />
+          <JobFeed jobs={jobs} loading={jobsLoading} onSelectJob={handleOpenJob} />
         </div>
       </div>
+
+      {selectedJob && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 60,
+          background: 'rgba(0,0,0,0.72)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+        }}>
+          <div style={{
+            width: 'min(1200px, 96vw)',
+            height: 'min(80vh, 860px)',
+            background: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 12,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '14px 18px',
+              borderBottom: '1px solid var(--color-border)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}>
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: 'var(--color-text-primary)' }}>
+                  Job #{selectedJob.id}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
+                  {selectedJob.query} · {jobLeads.length} leads ligados a esta extração
+                </div>
+              </div>
+              <button
+                onClick={() => { setSelectedJob(null); setJobLeads([]) }}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-secondary)',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  padding: 6,
+                  display: 'flex',
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              {jobLeadsLoading ? (
+                <div style={{ padding: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--color-text-secondary)', fontSize: 13 }}>
+                  <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  A carregar leads do job...
+                </div>
+              ) : (
+                <DataGrid
+                  leads={jobLeads}
+                  onSelectLead={setDrawerLead}
+                  selectedIds={new Set()}
+                  onToggleSelect={() => {}}
+                  onToggleAll={() => {}}
+                  selectable={false}
+                />
+              )}
+            </div>
+          </div>
+          <LeadDrawer lead={drawerLead} onClose={() => setDrawerLead(null)} />
+        </div>
+      )}
     </div>
   )
 }

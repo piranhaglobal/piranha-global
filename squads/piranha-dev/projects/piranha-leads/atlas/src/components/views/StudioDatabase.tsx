@@ -1,11 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Filter, Download, RefreshCw, Loader, ShieldCheck, X, CheckCircle, AlertCircle, Trash2, Sparkles } from 'lucide-react'
-import type { Lead } from '../../types'
+import { Filter, Download, RefreshCw, Loader, ShieldCheck, X, CheckCircle, AlertCircle, Trash2, Sparkles, Zap } from 'lucide-react'
+import type { KlaviyoList, Lead } from '../../types'
 import { fetchLeads, startEnrichment, startValidation } from '../../services/leadsService'
-import { triggerKlaviyoSync } from '../../services/klaviyoService'
+import { fetchKlaviyoLists, triggerSelectedKlaviyoSync } from '../../services/klaviyoService'
 import DataGrid from '../ui/DataGrid'
 import LeadDrawer from '../ui/LeadDrawer'
-import KlaviyoSyncBar from '../ui/KlaviyoSyncBar'
 import type { KlaviyoSyncResult } from '../../types'
 
 interface Filters {
@@ -66,6 +65,9 @@ export default function StudioDatabase() {
   const [showFilters, setShowFilters] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<KlaviyoSyncResult | null>(null)
+  const [syncModalOpen, setSyncModalOpen] = useState(false)
+  const [klaviyoLists, setKlaviyoLists] = useState<KlaviyoList[]>([])
+  const [selectedListId, setSelectedListId] = useState('')
   const [validating, setValidating] = useState(false)
   const [enriching, setEnriching] = useState(false)
   const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
@@ -86,8 +88,13 @@ export default function StudioDatabase() {
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchLeads()
+      const [data, klaviyoData] = await Promise.all([
+        fetchLeads(),
+        fetchKlaviyoLists().catch(() => ({ lists: [], default_list_id: '' })),
+      ])
       setLeads(data)
+      setKlaviyoLists(klaviyoData.lists)
+      setSelectedListId(prev => prev || klaviyoData.default_list_id || klaviyoData.lists[0]?.id || '')
     } catch (e) {
       setError(String(e))
     } finally {
@@ -160,13 +167,21 @@ export default function StudioDatabase() {
     exportCSV(toExport)
   }
 
-  async function handleSync() {
+  function openSyncModal() {
+    if (selectedIds.size === 0) return
+    setSyncResult(null)
+    setSyncModalOpen(true)
+  }
+
+  async function handleSyncSelected() {
+    if (selectedIds.size === 0 || !selectedListId) return
     setSyncing(true)
     setSyncResult(null)
     try {
-      const result = await triggerKlaviyoSync()
+      const result = await triggerSelectedKlaviyoSync(Array.from(selectedIds), selectedListId)
       setSyncResult(result)
       await load()
+      setSelectedIds(new Set())
     } catch {
       // silent
     } finally {
@@ -486,6 +501,31 @@ export default function StudioDatabase() {
 
         {selectedIds.size > 0 && (
           <button
+            onClick={openSyncModal}
+            disabled={syncing}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              background: 'rgba(59,130,246,0.12)',
+              border: '1px solid rgba(59,130,246,0.35)',
+              color: '#93C5FD',
+              borderRadius: 6,
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: syncing ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {syncing
+              ? <Loader size={13} style={{ animation: 'spin 1s linear infinite' }} />
+              : <Zap size={13} />}
+            Sync Selecionados ao Klaviyo ({selectedIds.size})
+          </button>
+        )}
+
+        {selectedIds.size > 0 && (
+          <button
             onClick={handleEnrich}
             disabled={enriching || validating}
             style={{
@@ -655,11 +695,6 @@ export default function StudioDatabase() {
         </div>
       )}
 
-      {/* Klaviyo bar */}
-      <div style={{ padding: '8px 20px', flexShrink: 0, borderBottom: '1px solid var(--color-border)' }}>
-        <KlaviyoSyncBar syncing={syncing} result={syncResult} onSync={handleSync} />
-      </div>
-
       {/* Grid */}
       <div style={{ flex: 1, overflow: 'auto' }}>
         <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
@@ -684,6 +719,107 @@ export default function StudioDatabase() {
       </div>
 
       <LeadDrawer lead={drawerLead} onClose={() => setDrawerLead(null)} />
+
+      {syncModalOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 50,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 12,
+            padding: 24,
+            width: 520,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, color: 'var(--color-text-primary)' }}>
+                  Sync Selecionados ao Klaviyo
+                </div>
+                <div style={{ color: 'var(--color-text-secondary)', fontSize: 12, marginTop: 4 }}>
+                  Etapa 1: escolhe a lista. Etapa 2: confirma o envio de {selectedIds.size} leads.
+                </div>
+              </div>
+              <button
+                onClick={() => { setSyncModalOpen(false); setSyncResult(null) }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 4 }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto', marginBottom: 14 }}>
+              {klaviyoLists.length === 0 && (
+                <div style={{ padding: 14, border: '1px dashed var(--color-border)', borderRadius: 8, color: 'var(--color-text-secondary)', fontSize: 13 }}>
+                  Nenhuma lista Klaviyo configurada em Settings.
+                </div>
+              )}
+              {klaviyoLists.map(list => {
+                const active = selectedListId === list.id
+                return (
+                  <button
+                    key={list.id}
+                    onClick={() => setSelectedListId(list.id)}
+                    style={{
+                      textAlign: 'left',
+                      padding: '10px 12px',
+                      background: active ? 'rgba(59,130,246,0.12)' : 'var(--color-bg-surface)',
+                      border: `1px solid ${active ? 'rgba(59,130,246,0.35)' : 'var(--color-border)'}`,
+                      color: active ? '#BFDBFE' : 'var(--color-text-primary)',
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{list.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 3 }}>{list.id}</div>
+                  </button>
+                )
+              })}
+            </div>
+
+            {syncResult && (
+              <div style={{ marginBottom: 12, padding: '10px 12px', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 8, color: 'var(--color-success)', fontSize: 12 }}>
+                Sync concluído: {syncResult.synced} enviados, {syncResult.skipped} ignorados.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                onClick={() => { setSyncModalOpen(false); setSyncResult(null) }}
+                style={{
+                  padding: '8px 14px',
+                  background: 'transparent',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-secondary)',
+                  borderRadius: 6,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSyncSelected}
+                disabled={syncing || !selectedListId || klaviyoLists.length === 0}
+                style={{
+                  padding: '8px 14px',
+                  background: syncing || !selectedListId || klaviyoLists.length === 0 ? 'var(--color-bg-surface)' : '#2563EB',
+                  border: 'none',
+                  color: syncing || !selectedListId || klaviyoLists.length === 0 ? 'var(--color-text-secondary)' : '#fff',
+                  borderRadius: 6,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: syncing || !selectedListId || klaviyoLists.length === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {syncing ? 'A sincronizar...' : 'Confirmar envio'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirm Modal */}
       {deleteConfirm && (
