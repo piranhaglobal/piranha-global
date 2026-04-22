@@ -23,11 +23,11 @@ class Config:
     CARTESIA_API_KEY: str = os.getenv("CARTESIA_API_KEY", "")
     CARTESIA_VOICE_ID: str = os.getenv("VOICE_ID", "")  # variável no .env é VOICE_ID
 
-    # Twilio — credenciais principais
+    # Twilio — credenciais da conta
     TWILIO_ACCOUNT_SID: str = os.getenv("TWILIO_ACCOUNT_SID", "")
-    TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN", "")
+    TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN", "")  # opcional/fallback local
 
-    # Twilio — API Key (autenticação preferencial para região IE1)
+    # Twilio — API Key regional (autenticação preferencial para regiões como IE1)
     TWILIO_API_KEY_SID: str = os.getenv("TWILIO_API_KEY_SID", "")
     TWILIO_API_KEY_SECRET: str = os.getenv("TWILIO_API_KEY_SECRET", "")
 

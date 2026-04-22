@@ -1,4 +1,4 @@
-"""Cliente Twilio — dispara ligações telefónicas via API Key + edge Dublin (IE1)."""
+"""Cliente Twilio — dispara ligações via API Key usando processamento regional Twilio."""
 
 import requests
 
@@ -9,21 +9,37 @@ logger = setup_logger(__name__)
 
 
 class TwilioClient:
-    # O Twilio REST API usa sempre api.twilio.com.
-    # O roteamento para o edge Dublin (IE1) é garantido pelas credenciais
-    # regionais (API Key SID/Secret criadas na região IE1) — não por hostname.
     BASE_URL = "https://api.twilio.com/2010-04-01"
 
     def __init__(self) -> None:
         """
-        Inicializa o cliente com autenticação via API Key (IE1/Dublin).
-        A auth usa (API_KEY_SID, API_KEY_SECRET) em vez de (ACCOUNT_SID, AUTH_TOKEN).
+        Inicializa o cliente com autenticação via API Key regional.
+        Para regiões não-US, o hostname deve incluir edge + region
+        (ex: api.dublin.ie1.twilio.com) para garantir processamento nessa região.
         """
-        self.base_url = self.BASE_URL
+        self.base_url = self._build_base_url()
         self.account_sid = Config.TWILIO_ACCOUNT_SID
-        # Auth via Account SID + Auth Token (padrão Twilio REST API)
-        self.auth = (Config.TWILIO_ACCOUNT_SID, Config.TWILIO_AUTH_TOKEN)
+        self.auth = (Config.TWILIO_API_KEY_SID, Config.TWILIO_API_KEY_SECRET)
         self.session = requests.Session()
+
+    @staticmethod
+    def _build_base_url() -> str:
+        """
+        Constrói o base URL correto do Twilio REST API para a região configurada.
+
+        US1 usa api.twilio.com.
+        Regiões como IE1/AU1 exigem o formato api.<edge>.<region>.twilio.com.
+        """
+        region = (Config.TWILIO_REGION or "").strip().lower()
+        edge = (Config.TWILIO_EDGE or "").strip().lower()
+
+        if not region or region == "us1":
+            return TwilioClient.BASE_URL
+
+        if not edge:
+            raise ValueError("TWILIO_EDGE é obrigatório quando TWILIO_REGION não é us1")
+
+        return f"https://api.{edge}.{region}.twilio.com/2010-04-01"
 
     def make_call(
         self,
@@ -68,7 +84,7 @@ class TwilioClient:
         call_sid = data.get("sid", "")
         logger.info(
             f"Ligação Twilio disparada | to={to_number} | sid={call_sid} "
-            f"| edge={Config.TWILIO_EDGE} | region={Config.TWILIO_REGION}"
+            f"| edge={Config.TWILIO_EDGE} | region={Config.TWILIO_REGION} | base_url={self.base_url}"
         )
         return data
 
