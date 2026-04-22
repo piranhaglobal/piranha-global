@@ -8,14 +8,18 @@ REMOTE_DIR="/opt/piranha-leads"
 LOCAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "A enviar $LOCAL_DIR -> $VPS_USER@$VPS_IP:$REMOTE_DIR"
+echo "Dados persistentes e .env ficam preservados na VPS."
 
 rsync -avz --progress \
   --exclude '.git' \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
   --exclude '.venv/' \
+  --exclude '.env' \
+  --exclude 'data/' \
   --exclude 'atlas/node_modules/' \
   --exclude 'atlas/dist/' \
+  --exclude 'atlas/tsconfig.tsbuildinfo' \
   "$LOCAL_DIR/" "$VPS_USER@$VPS_IP:$REMOTE_DIR/"
 
 echo ""

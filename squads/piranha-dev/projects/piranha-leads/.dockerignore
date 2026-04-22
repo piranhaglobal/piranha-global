@@ -1,0 +1,9 @@
+.git
+__pycache__/
+*.pyc
+.venv/
+.env
+data/
+atlas/node_modules/
+atlas/dist/
+atlas/tsconfig.tsbuildinfo

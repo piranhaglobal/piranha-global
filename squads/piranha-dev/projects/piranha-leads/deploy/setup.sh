@@ -8,6 +8,7 @@ STACK_NAME="piranha-leads"
 
 echo "=== [1/4] Docker build ==="
 cd "$PROJECT_DIR"
+mkdir -p "$PROJECT_DIR/data"
 docker build -t "$IMAGE_NAME" .
 
 echo ""
