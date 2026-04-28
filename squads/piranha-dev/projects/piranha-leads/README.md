@@ -22,6 +22,32 @@ O fluxo de release envia apenas código para a VPS.
 
 Isto evita misturar dados locais com a instância de produção.
 
+## Atlas Research Chat
+
+O Atlas inclui um chat operacional para transformar contexto de pesquisa em jobs de scraping.
+
+Variáveis opcionais:
+
+```bash
+OPENAI_API_KEY=...
+OPENAI_CHAT_MODEL=gpt-4o-mini
+OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
+OPENAI_PLANNER_MODEL=gpt-5.5
+ATLAS_DAILY_CHAT_CRON=1
+```
+
+Para proteger o Atlas com Google Login:
+
+```bash
+ATLAS_REQUIRE_AUTH=1
+ATLAS_SESSION_SECRET=...
+GOOGLE_OAUTH_CLIENT_ID=...
+GOOGLE_OAUTH_CLIENT_SECRET=...
+GOOGLE_OAUTH_REDIRECT_URI=https://scraping.piranhasupplies.com/api/auth/google/callback
+```
+
+Quando `ATLAS_REQUIRE_AUTH=1`, o backend aceita apenas contas Google com email `@piranha.com.pt`.
+
 Passos:
 
 ```bash

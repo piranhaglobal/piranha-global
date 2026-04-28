@@ -49,7 +49,12 @@ export default function ScraperControl() {
     finally { setJobsLoading(false) }
   }
 
-  useEffect(() => { loadJobs() }, [])
+  useEffect(() => {
+    loadJobs()
+    const onJobsUpdated = () => loadJobs()
+    window.addEventListener('piranha:jobs-updated', onJobsUpdated)
+    return () => window.removeEventListener('piranha:jobs-updated', onJobsUpdated)
+  }, [])
 
   function toggleCountry(code: string) {
     const country = EUROPEAN_COUNTRIES.find(c => c.code === code)!

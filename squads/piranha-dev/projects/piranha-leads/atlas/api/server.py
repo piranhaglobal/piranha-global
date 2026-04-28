@@ -1,17 +1,24 @@
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import os
+import shutil
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import AsyncGenerator
+from urllib.parse import quote
 from urllib.parse import urlparse
+from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -25,10 +32,20 @@ load_dotenv(BASE_DIR / ".env", override=True)
 
 from storage.database import (
     init_db, get_all_leads, get_leads_for_job, get_unsynced_leads, mark_leads_synced,
-    create_job, get_job, get_all_jobs, update_job, init_jobs_table
+    create_job, get_job, get_all_jobs, update_job, init_jobs_table, get_connection
+)
+from storage.research_chat import (
+    init_research_chat_tables, create_thread, get_thread, list_threads, add_message,
+    list_messages, get_context, upsert_context, create_brief, update_brief,
+    find_research_log_by_key, create_research_log, list_research_log, list_complete_contexts,
+    make_dedupe_key, list_folders, create_folder, set_thread_folder, delete_thread,
+    clear_context,
 )
 from storage.klaviyo_lists import load_klaviyo_lists, upsert_klaviyo_list, delete_klaviyo_list
 from integrations.klaviyo import get_list_details, sync_leads_to_klaviyo
+from integrations.openai_chat import chat_response, transcribe_audio
+from utils.places_research import build_places_market_snapshot, should_use_places_intelligence
+from utils.research_context import context_to_brief_text, merge_context
 import main as scraper_main
 
 app = FastAPI(title="Piranha Atlas API")
@@ -36,9 +53,69 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 init_db()
 init_jobs_table()
+init_research_chat_tables()
 
 # In-memory SSE queue per job
 _job_queues: dict[str, asyncio.Queue] = {}
+
+
+def _auth_domain() -> str:
+    return os.getenv("ATLAS_AUTH_DOMAIN", "piranha.com.pt").strip().lower()
+
+
+def _auth_required(request: Request | None = None) -> bool:
+    configured = os.getenv("ATLAS_REQUIRE_AUTH")
+    if configured is not None:
+        return configured == "1"
+
+    # Safe default: local development can run without auth, public domains cannot.
+    host = (request.url.hostname if request else "") or ""
+    return host not in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def _google_oauth_configured() -> bool:
+    return bool(os.getenv("GOOGLE_OAUTH_CLIENT_ID") and os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"))
+
+
+def _auth_error_redirect(message: str) -> RedirectResponse:
+    return RedirectResponse(f"/?auth_error={quote(message)}", status_code=303)
+
+
+def _cookie_secret() -> bytes:
+    return os.getenv("ATLAS_SESSION_SECRET", os.getenv("OPENAI_API_KEY", "dev-secret")).encode("utf-8")
+
+
+def _sign_payload(payload: dict) -> str:
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+    sig = hmac.new(_cookie_secret(), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{body}.{sig}"
+
+
+def _read_session(request: Request) -> dict | None:
+    raw = request.cookies.get("atlas_session")
+    if not raw or "." not in raw:
+        return None
+    body, sig = raw.rsplit(".", 1)
+    expected = hmac.new(_cookie_secret(), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        return json.loads(base64.urlsafe_b64decode(body.encode("utf-8")))
+    except Exception:
+        return None
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if not _auth_required(request):
+        return await call_next(request)
+
+    path = request.url.path
+    if path.startswith("/api/auth") or path.startswith("/assets"):
+        return await call_next(request)
+    if path.startswith("/api/") and not _read_session(request):
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    return await call_next(request)
 
 
 # ── Models ──────────────────────────────────────────────────────────────────
@@ -50,6 +127,502 @@ class JobStartRequest(BaseModel):
     use_firecrawl: bool = False
     validate_and_enrich: bool = False
     auto_klaviyo: bool = False
+
+
+class ChatThreadCreateRequest(BaseModel):
+    title: str = "Nova pesquisa"
+    folder_id: str | None = None
+
+
+class ChatMessageRequest(BaseModel):
+    content: str
+
+
+class ChatFolderCreateRequest(BaseModel):
+    name: str
+
+
+class ChatThreadFolderRequest(BaseModel):
+    folder_id: str | None = None
+
+
+class ChatContextUpdateRequest(BaseModel):
+    category: str | None = None
+    region: str | None = None
+    cities: list[str] = []
+    leads_per_city: int | None = None
+    min_reviews: int | None = None
+    query: str | None = None
+    objective: str | None = None
+
+
+class ChatPlacesInsightsRequest(BaseModel):
+    prompt: str | None = None
+
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    if not _auth_required(request):
+        return {"authenticated": True, "user": {"email": "dev@piranha.com.pt", "name": "Dev"}}
+    session = _read_session(request)
+    if not session:
+        raise HTTPException(401, "Authentication required")
+    return {"authenticated": True, "user": session}
+
+
+@app.get("/api/auth/config")
+def auth_config(request: Request):
+    return {
+        "required": _auth_required(request),
+        "google_configured": _google_oauth_configured(),
+        "domain": _auth_domain(),
+    }
+
+
+@app.get("/api/auth/google/login")
+def google_login(request: Request):
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
+    if not client_id or not os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"):
+        return _auth_error_redirect("Google OAuth não configurado no servidor")
+    redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI") or str(request.url_for("google_callback"))
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "hd": _auth_domain(),
+        "prompt": "select_account",
+    }
+    return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}")
+
+
+@app.get("/api/auth/google/callback")
+def google_callback(request: Request, code: str | None = None, error: str | None = None):
+    import requests as req_lib
+
+    if error:
+        return _auth_error_redirect("Login Google cancelado ou recusado")
+    if not code:
+        return _auth_error_redirect("Código de login Google ausente")
+
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        return _auth_error_redirect("Google OAuth não configurado no servidor")
+
+    redirect_uri = os.getenv("GOOGLE_OAUTH_REDIRECT_URI") or str(request.url_for("google_callback"))
+    try:
+        token_res = req_lib.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=20,
+        )
+        token_res.raise_for_status()
+        token = token_res.json()["access_token"]
+        user_res = req_lib.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=20,
+        )
+        user_res.raise_for_status()
+    except Exception:
+        return _auth_error_redirect("Não foi possível conectar a conta Google")
+
+    user = user_res.json()
+    email = (user.get("email") or "").lower()
+    if not email.endswith(f"@{_auth_domain()}"):
+        return _auth_error_redirect(f"Acesso restrito a contas @{_auth_domain()}")
+
+    response = RedirectResponse("/")
+    response.set_cookie(
+        "atlas_session",
+        _sign_payload({"email": email, "name": user.get("name") or email}),
+        httponly=True,
+        secure=os.getenv("ATLAS_COOKIE_SECURE", "1") == "1",
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+    )
+    return response
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("atlas_session")
+    return response
+
+
+def _launch_scraper_job(req: JobStartRequest) -> str:
+    from config import SPAIN_CITIES
+    job_id = str(uuid.uuid4())[:8]
+    cities = req.cities if req.cities else SPAIN_CITIES
+    create_job(job_id, req.query, cities)
+    _job_queues[job_id] = asyncio.Queue()
+
+    loop = asyncio.get_event_loop()
+
+    def callback(event_type: str, data: dict):
+        data["type"] = event_type
+        loop.call_soon_threadsafe(_job_queues[job_id].put_nowait, data)
+
+        if event_type == "city_progress":
+            update_job(job_id,
+                leads_found=data.get("leads_found", 0),
+                leads_with_email=data.get("leads_with_email", 0))
+
+        if event_type == "job_complete":
+            finished = datetime.utcnow().isoformat()
+            job = get_job(job_id)
+            started = datetime.fromisoformat(job["started_at"])
+            duration = (datetime.utcnow() - started).total_seconds()
+            update_job(job_id,
+                status="completed",
+                finished_at=finished,
+                duration_seconds=duration,
+                leads_found=data.get("total_leads", 0),
+                klaviyo_synced=data.get("klaviyo_synced", 0))
+            loop.call_soon_threadsafe(_job_queues[job_id].put_nowait, {"type": "__done__"})
+
+    def run_scraper():
+        try:
+            scraper_main.run(
+                progress_callback=callback,
+                cities_override=cities,
+                query_override=req.query,
+                job_id=job_id,
+                enrich_email=req.enrich_email,
+                use_firecrawl=req.use_firecrawl,
+                auto_klaviyo=req.auto_klaviyo,
+                validate_and_enrich=req.validate_and_enrich,
+            )
+        except Exception as e:
+            update_job(job_id, status="failed", error=str(e))
+            loop.call_soon_threadsafe(_job_queues[job_id].put_nowait, {"type": "__done__", "error": str(e)})
+
+    import threading
+    threading.Thread(target=run_scraper, daemon=True).start()
+    return job_id
+
+
+def _fallback_chat_reply(context: dict) -> str:
+    missing_fields = context.get("missing_fields") or []
+    if isinstance(missing_fields, str):
+        missing_fields = [field for field in missing_fields.split(",") if field]
+
+    if missing_fields:
+        labels = {
+            "category": "categoria",
+            "region_or_cities": "região ou cidades",
+            "leads_per_city": "leads por cidade",
+            "min_reviews": "mínimo de reviews",
+        }
+        missing = ", ".join(labels.get(field, field) for field in missing_fields)
+        return f"Tenho parte do briefing. Falta definir: {missing}."
+    return "Contexto completo. Vou preparar o briefing e criar o job de scraping com estes parâmetros."
+
+
+def _format_places_snapshot(snapshot: dict | None) -> str:
+    if not snapshot:
+        return ""
+    if not snapshot.get("available"):
+        return f"Google Places indisponível: {snapshot.get('reason')}"
+
+    lines = [
+        snapshot.get("summary", "").strip(),
+        f"País/região: {snapshot.get('country')}",
+        f"Query: {snapshot.get('query')}",
+        f"Reviews mínimas: {snapshot.get('min_reviews')}",
+    ]
+    for row in (snapshot.get("top_cities") or [])[:5]:
+        if row.get("error"):
+            lines.append(f"- {row.get('city')}: erro ({row.get('error')})")
+            continue
+        lines.append(
+            f"- {row.get('city')}: {row.get('qualified_count', 0)} leads, melhor com {row.get('best_reviews', 0)} reviews"
+        )
+        for business in row.get("best_businesses") or []:
+            lines.append(f"  • {business.get('name')} ({business.get('reviews', 0)} reviews)")
+    return "\n".join(lines)
+
+
+def _chat_completion_for_thread(thread_id: str, context: dict, places_snapshot: dict | None = None) -> tuple[str, str | None]:
+    messages = list_messages(thread_id)[-12:]
+    system = {
+        "role": "system",
+        "content": (
+            "És o Research Chat do Atlas, responsável por transformar conversas em briefings "
+            "operacionais de scraping de leads. Responde em português, de forma curta e operacional. "
+            "Nunca inventes filtros obrigatórios. Se faltar categoria, região/cidades, leads por cidade "
+            "ou reviews mínimas, pede só o que falta. Quando houver snapshot do Google Places, usa-o "
+            "para recomendar cidades e hipóteses reais de pesquisa. Contexto estruturado atual:\n"
+            f"{context_to_brief_text(context)}"
+            + (f"\n\nSnapshot Google Places:\n{_format_places_snapshot(places_snapshot)}" if places_snapshot else "")
+        ),
+    }
+    openai_messages = [system] + [
+        {"role": msg["role"], "content": msg["content"]}
+        for msg in messages
+        if msg["role"] in {"user", "assistant"}
+    ]
+    model = (
+        os.getenv("OPENAI_PLANNER_MODEL", "gpt-5.5")
+        if not context.get("missing_fields")
+        else os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+    )
+    try:
+        return chat_response(openai_messages, model=model), model
+    except Exception:
+        return _fallback_chat_reply(context), None
+
+
+def _execute_complete_context(thread_id: str, context: dict) -> dict | None:
+    if context.get("missing_fields"):
+        return None
+
+    brief = create_brief(thread_id, context)
+    dedupe_key = brief["payload"]["dedupe_key"]
+    existing = find_research_log_by_key(dedupe_key)
+    if existing:
+        update_brief(brief["id"], status="blocked_duplicate")
+        return {"brief": brief, "blocked_duplicate": True, "existing_log": existing}
+
+    job_id = _launch_scraper_job(JobStartRequest(
+        query=context["query"],
+        cities=context["cities"],
+        enrich_email=True,
+        use_firecrawl=False,
+        validate_and_enrich=False,
+        auto_klaviyo=False,
+    ))
+    update_brief(brief["id"], status="executed", executed_job_id=job_id)
+    log = create_research_log(thread_id, brief["id"], context, job_id, "executed")
+    return {"brief": brief, "job_id": job_id, "research_log": log, "blocked_duplicate": False}
+
+
+def _seconds_until_next_daily_run() -> float:
+    tz = ZoneInfo("Europe/Lisbon")
+    now = datetime.now(tz)
+    target = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target = target + timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+def _run_daily_chat_context() -> dict | None:
+    for context in list_complete_contexts():
+        if find_research_log_by_key(make_dedupe_key(context)):
+            continue
+        return _execute_complete_context(context["thread_id"], context)
+    return None
+
+
+async def _daily_research_scheduler() -> None:
+    while True:
+        await asyncio.sleep(_seconds_until_next_daily_run())
+        try:
+            _run_daily_chat_context()
+        except Exception as e:
+            print(f"[daily-research-chat] erro: {e}")
+
+
+@app.on_event("startup")
+async def start_daily_research_scheduler():
+    if os.getenv("ATLAS_DAILY_CHAT_CRON", "1") == "1":
+        asyncio.create_task(_daily_research_scheduler())
+
+
+# ── Research Chat ────────────────────────────────────────────────────────────
+
+@app.get("/api/chat/threads")
+def chat_threads():
+    return list_threads()
+
+
+@app.post("/api/chat/threads")
+def chat_create_thread(req: ChatThreadCreateRequest):
+    return create_thread(req.title, req.folder_id)
+
+
+@app.delete("/api/chat/threads/{thread_id}")
+def chat_delete_thread(thread_id: str):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+    delete_thread(thread_id)
+    return {"deleted": thread_id}
+
+
+@app.post("/api/chat/threads/{thread_id}/folder")
+def chat_move_thread(thread_id: str, req: ChatThreadFolderRequest):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+    set_thread_folder(thread_id, req.folder_id)
+    return get_thread(thread_id)
+
+
+@app.get("/api/chat/folders")
+def chat_folders():
+    return list_folders()
+
+
+@app.post("/api/chat/folders")
+def chat_create_folder(req: ChatFolderCreateRequest):
+    return create_folder(req.name)
+
+
+@app.get("/api/chat/threads/{thread_id}/messages")
+def chat_thread_messages(thread_id: str):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+    return {"messages": list_messages(thread_id), "context": get_context(thread_id)}
+
+
+@app.post("/api/chat/threads/{thread_id}/messages")
+async def chat_send_message(thread_id: str, req: ChatMessageRequest):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+
+    user_content = req.content.strip()
+    if not user_content:
+        raise HTTPException(400, "Message content is required")
+
+    add_message(thread_id, "user", user_content)
+    existing_context = get_context(thread_id)
+    context = upsert_context(thread_id, merge_context(existing_context, user_content))
+    places_snapshot = build_places_market_snapshot(context, user_content) if should_use_places_intelligence(user_content, context) else None
+    reply, model = _chat_completion_for_thread(thread_id, context, places_snapshot=places_snapshot)
+    assistant_message = add_message(thread_id, "assistant", reply, model=model)
+    execution = _execute_complete_context(thread_id, context)
+
+    return {
+        "message": assistant_message,
+        "context": context,
+        "context_complete": context["completeness_status"] == "complete",
+        "can_execute_scrape": context["completeness_status"] == "complete",
+        "execution": execution,
+        "places_snapshot": places_snapshot,
+    }
+
+
+@app.post("/api/chat/threads/{thread_id}/audio")
+async def chat_audio_message(thread_id: str, file: UploadFile = File(...)):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+
+    if file.content_type and not file.content_type.startswith("audio/"):
+        raise HTTPException(400, "Audio file required")
+
+    audio_dir = BASE_DIR / "data" / "chat-audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "audio.webm").suffix or ".webm"
+    audio_path = audio_dir / f"{thread_id}-{uuid.uuid4().hex[:10]}{suffix}"
+    with audio_path.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+
+    try:
+        transcript = transcribe_audio(audio_path)
+    except Exception as e:
+        raise HTTPException(502, f"Audio transcription failed: {e}")
+
+    user_msg = add_message(
+        thread_id,
+        "user",
+        transcript,
+        model=os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"),
+        audio_path=str(audio_path),
+        transcript=transcript,
+    )
+    existing_context = get_context(thread_id)
+    context = upsert_context(thread_id, merge_context(existing_context, transcript))
+    reply, model = _chat_completion_for_thread(thread_id, context)
+    assistant_message = add_message(thread_id, "assistant", reply, model=model)
+    execution = _execute_complete_context(thread_id, context)
+
+    return {
+        "transcript": transcript,
+        "user_message": user_msg,
+        "message": assistant_message,
+        "context": context,
+        "context_complete": context["completeness_status"] == "complete",
+        "can_execute_scrape": context["completeness_status"] == "complete",
+        "execution": execution,
+    }
+
+
+@app.post("/api/chat/threads/{thread_id}/transcribe")
+async def chat_transcribe_audio(thread_id: str, file: UploadFile = File(...)):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+
+    if file.content_type and not file.content_type.startswith("audio/"):
+        raise HTTPException(400, "Audio file required")
+
+    audio_dir = BASE_DIR / "data" / "chat-audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "audio.webm").suffix or ".webm"
+    audio_path = audio_dir / f"draft-{thread_id}-{uuid.uuid4().hex[:10]}{suffix}"
+    with audio_path.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+
+    try:
+        transcript = transcribe_audio(audio_path)
+    except Exception as e:
+        raise HTTPException(502, f"Audio transcription failed: {e}")
+    return {"transcript": transcript}
+
+
+@app.post("/api/chat/threads/{thread_id}/places-insights")
+def chat_places_insights(thread_id: str, req: ChatPlacesInsightsRequest):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+    context = get_context(thread_id) or {}
+    snapshot = build_places_market_snapshot(context, req.prompt)
+    return {"snapshot": snapshot}
+
+
+@app.put("/api/chat/threads/{thread_id}/context")
+def chat_update_context(thread_id: str, req: ChatContextUpdateRequest):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+    context = {
+        "category": req.category.strip() if req.category else None,
+        "region": req.region.strip() if req.region else None,
+        "cities": req.cities,
+        "leads_per_city": req.leads_per_city,
+        "min_reviews": req.min_reviews,
+        "query": req.query.strip() if req.query else None,
+        "objective": req.objective.strip() if req.objective else None,
+        "missing_fields": [],
+    }
+    if not context["category"]:
+        context["missing_fields"].append("category")
+    if not context["cities"] and not context["region"]:
+        context["missing_fields"].append("region_or_cities")
+    if not context["leads_per_city"]:
+        context["missing_fields"].append("leads_per_city")
+    if not context["min_reviews"]:
+        context["missing_fields"].append("min_reviews")
+    return upsert_context(thread_id, context)
+
+
+@app.delete("/api/chat/threads/{thread_id}/context")
+def chat_clear_context(thread_id: str):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+    clear_context(thread_id)
+    return {"cleared": thread_id}
+
+
+@app.get("/api/research/log")
+def research_log():
+    return list_research_log()
 
 
 # ── Leads ────────────────────────────────────────────────────────────────────
@@ -387,54 +960,7 @@ def get_job_endpoint(job_id: str):
 
 @app.post("/api/jobs/start")
 async def start_job(req: JobStartRequest):
-    from config import SPAIN_CITIES
-    job_id = str(uuid.uuid4())[:8]
-    cities = req.cities if req.cities else SPAIN_CITIES
-    create_job(job_id, req.query, cities)
-    _job_queues[job_id] = asyncio.Queue()
-
-    loop = asyncio.get_event_loop()
-
-    def callback(event_type: str, data: dict):
-        data["type"] = event_type
-        loop.call_soon_threadsafe(_job_queues[job_id].put_nowait, data)
-
-        if event_type == "city_progress":
-            update_job(job_id,
-                leads_found=data.get("leads_found", 0),
-                leads_with_email=data.get("leads_with_email", 0))
-
-        if event_type == "job_complete":
-            finished = datetime.utcnow().isoformat()
-            job = get_job(job_id)
-            started = datetime.fromisoformat(job["started_at"])
-            duration = (datetime.utcnow() - started).total_seconds()
-            update_job(job_id,
-                status="completed",
-                finished_at=finished,
-                duration_seconds=duration,
-                leads_found=data.get("total_leads", 0),
-                klaviyo_synced=data.get("klaviyo_synced", 0))
-            loop.call_soon_threadsafe(_job_queues[job_id].put_nowait, {"type": "__done__"})
-
-    def run_scraper():
-        try:
-            scraper_main.run(
-                progress_callback=callback,
-                cities_override=cities,
-                query_override=req.query,
-                job_id=job_id,
-                enrich_email=req.enrich_email,
-                use_firecrawl=req.use_firecrawl,
-                auto_klaviyo=req.auto_klaviyo,
-                validate_and_enrich=req.validate_and_enrich,
-            )
-        except Exception as e:
-            update_job(job_id, status="failed", error=str(e))
-            loop.call_soon_threadsafe(_job_queues[job_id].put_nowait, {"type": "__done__", "error": str(e)})
-
-    import threading
-    threading.Thread(target=run_scraper, daemon=True).start()
+    job_id = _launch_scraper_job(req)
     return {"job_id": job_id}
 
 

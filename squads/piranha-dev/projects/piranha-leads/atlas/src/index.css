@@ -22,12 +22,19 @@
   box-sizing: border-box;
 }
 
+html,
+#root {
+  height: 100%;
+}
+
 body {
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
   margin: 0;
   padding: 0;
+  min-height: 100%;
+  overflow: hidden;
 }
 
 ::-webkit-scrollbar {
