@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shutil
 import sys
 import uuid
@@ -157,6 +158,7 @@ class ChatContextUpdateRequest(BaseModel):
     query: str | None = None
     objective: str | None = None
     klaviyo_list_id: str | None = None
+    execution_mode: str | None = None
 
 
 class ChatPlacesInsightsRequest(BaseModel):
@@ -169,6 +171,13 @@ class ChatThreadRenameRequest(BaseModel):
 
 class ChatThreadQueueRequest(BaseModel):
     enabled: bool
+
+
+def _normalize_execution_mode(value: str | None) -> str:
+    if not value:
+        return "plan"
+    mode = value.strip().lower()
+    return "execute" if mode == "execute" else "plan"
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -329,6 +338,10 @@ def _fallback_chat_reply(context: dict) -> str:
     if isinstance(missing_fields, str):
         missing_fields = [field for field in missing_fields.split(",") if field]
 
+    mode = context.get("execution_mode") or "plan"
+    if not missing_fields and mode != "execute":
+        return "Briefing completo. Estou em plan mode. Se quiseres, confirma com `/execute` ou muda o modo para Execute para eu disparar a pesquisa."
+
     if missing_fields:
         labels = {
             "category": "categoria",
@@ -367,15 +380,24 @@ def _format_places_snapshot(snapshot: dict | None) -> str:
 
 def _chat_completion_for_thread(thread_id: str, context: dict, places_snapshot: dict | None = None) -> tuple[str, str | None]:
     messages = list_messages(thread_id)[-12:]
+    mode = context.get("execution_mode") or "plan"
+    missing_fields = context.get("missing_fields") or []
+    if isinstance(missing_fields, str):
+        missing_fields = [field for field in missing_fields.split(",") if field]
+    if not missing_fields and mode != "execute":
+        return _fallback_chat_reply(context), None
     system = {
         "role": "system",
         "content": (
             "És o Research Chat do Atlas, responsável por transformar conversas em briefings "
             "operacionais de scraping de leads. Responde em português, de forma curta e operacional. "
             "Nunca inventes filtros obrigatórios. Se faltar categoria, região/cidades, leads por cidade "
-            "ou reviews mínimas, pede só o que falta. Quando houver snapshot do Google Places, usa-o "
-            "para recomendar cidades e hipóteses reais de pesquisa. Contexto estruturado atual:\n"
+            "ou reviews mínimas, pede só o que falta. Trabalha em two-step: 'plan' recolhe e valida o briefing; "
+            "'execute' apenas dispara pesquisa quando o briefing estiver completo. Se o modo atual for plan e "
+            "o briefing estiver completo, pede confirmação explícita antes de executar. Quando houver snapshot "
+            "do Google Places, usa-o para recomendar cidades e hipóteses reais de pesquisa. Contexto estruturado atual:\n"
             f"{context_to_brief_text(context)}"
+            f"\nModo atual: {mode}"
             + (f"\n\nSnapshot Google Places:\n{_format_places_snapshot(places_snapshot)}" if places_snapshot else "")
         ),
     }
@@ -386,7 +408,7 @@ def _chat_completion_for_thread(thread_id: str, context: dict, places_snapshot: 
     ]
     model = (
         os.getenv("OPENAI_PLANNER_MODEL", "gpt-5.5")
-        if not context.get("missing_fields")
+        if not missing_fields
         else os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
     )
     try:
@@ -398,6 +420,11 @@ def _chat_completion_for_thread(thread_id: str, context: dict, places_snapshot: 
 def _execute_complete_context(thread_id: str, context: dict) -> dict | None:
     if context.get("missing_fields"):
         return None
+    if (context.get("execution_mode") or "plan") != "execute":
+        return {
+            "pending_execution": True,
+            "execution_mode": context.get("execution_mode") or "plan",
+        }
 
     brief = create_brief(thread_id, context)
     dedupe_key = brief["payload"]["dedupe_key"]
@@ -420,6 +447,15 @@ def _execute_complete_context(thread_id: str, context: dict) -> dict | None:
     return {"brief": brief, "job_id": job_id, "research_log": log, "blocked_duplicate": False}
 
 
+def _apply_execution_mode_from_text(text: str, existing_context: dict | None) -> str | None:
+    normalized = text.lower().strip()
+    if re.search(r"(^|\s)/execute(\s|$)", normalized) or "modo execute" in normalized or "executa" in normalized or "podes executar" in normalized:
+        return "execute"
+    if re.search(r"(^|\s)/plan(\s|$)", normalized) or "modo plan" in normalized or "voltar a plan" in normalized or "modo de planeamento" in normalized:
+        return "plan"
+    return (existing_context or {}).get("execution_mode")
+
+
 def _seconds_until_next_daily_run() -> float:
     tz = ZoneInfo("Europe/Lisbon")
     now = datetime.now(tz)
@@ -440,6 +476,8 @@ def _next_daily_run_at() -> datetime:
 
 def _run_daily_chat_context() -> dict | None:
     for context in list_complete_contexts():
+        if (context.get("execution_mode") or "plan") != "execute":
+            continue
         if find_research_log_by_key(make_dedupe_key(context)):
             continue
         return _execute_complete_context(context["thread_id"], context)
@@ -560,7 +598,11 @@ async def chat_send_message(thread_id: str, req: ChatMessageRequest):
 
     add_message(thread_id, "user", user_content)
     existing_context = get_context(thread_id)
-    context = upsert_context(thread_id, merge_context(existing_context, user_content))
+    merged = merge_context(existing_context, user_content)
+    merged["execution_mode"] = _normalize_execution_mode(
+        _apply_execution_mode_from_text(user_content, existing_context)
+    )
+    context = upsert_context(thread_id, merged)
     places_snapshot = build_places_market_snapshot(context, user_content) if should_use_places_intelligence(user_content, context) else None
     reply, model = _chat_completion_for_thread(thread_id, context, places_snapshot=places_snapshot)
     assistant_message = add_message(thread_id, "assistant", reply, model=model)
@@ -570,7 +612,7 @@ async def chat_send_message(thread_id: str, req: ChatMessageRequest):
         "message": assistant_message,
         "context": context,
         "context_complete": context["completeness_status"] == "complete",
-        "can_execute_scrape": context["completeness_status"] == "complete",
+        "can_execute_scrape": context["completeness_status"] == "complete" and context.get("execution_mode") == "execute",
         "execution": execution,
         "places_snapshot": places_snapshot,
     }
@@ -605,7 +647,11 @@ async def chat_audio_message(thread_id: str, file: UploadFile = File(...)):
         transcript=transcript,
     )
     existing_context = get_context(thread_id)
-    context = upsert_context(thread_id, merge_context(existing_context, transcript))
+    merged = merge_context(existing_context, transcript)
+    merged["execution_mode"] = _normalize_execution_mode(
+        _apply_execution_mode_from_text(transcript, existing_context)
+    )
+    context = upsert_context(thread_id, merged)
     reply, model = _chat_completion_for_thread(thread_id, context)
     assistant_message = add_message(thread_id, "assistant", reply, model=model)
     execution = _execute_complete_context(thread_id, context)
@@ -616,7 +662,7 @@ async def chat_audio_message(thread_id: str, file: UploadFile = File(...)):
         "message": assistant_message,
         "context": context,
         "context_complete": context["completeness_status"] == "complete",
-        "can_execute_scrape": context["completeness_status"] == "complete",
+        "can_execute_scrape": context["completeness_status"] == "complete" and context.get("execution_mode") == "execute",
         "execution": execution,
     }
 
@@ -656,6 +702,7 @@ def chat_places_insights(thread_id: str, req: ChatPlacesInsightsRequest):
 def chat_update_context(thread_id: str, req: ChatContextUpdateRequest):
     if not get_thread(thread_id):
         raise HTTPException(404, "Thread not found")
+    existing = get_context(thread_id) or {}
     context = {
         "category": req.category.strip() if req.category else None,
         "region": req.region.strip() if req.region else None,
@@ -665,6 +712,7 @@ def chat_update_context(thread_id: str, req: ChatContextUpdateRequest):
         "query": req.query.strip() if req.query else None,
         "objective": req.objective.strip() if req.objective else None,
         "klaviyo_list_id": req.klaviyo_list_id.strip() if req.klaviyo_list_id else None,
+        "execution_mode": _normalize_execution_mode(req.execution_mode or existing.get("execution_mode")),
         "missing_fields": [],
     }
     if not context["category"]:

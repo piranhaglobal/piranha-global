@@ -117,7 +117,13 @@ function FormField({
   )
 }
 
-function ExecutionNotice({ execution }: { execution: ChatExecution | null }) {
+function ExecutionNotice({
+  execution,
+  onExecuteNow,
+}: {
+  execution: ChatExecution | null
+  onExecuteNow?: () => void
+}) {
   if (!execution) return null
   if (execution.blocked_duplicate) {
     return (
@@ -134,6 +140,44 @@ function ExecutionNotice({ execution }: { execution: ChatExecution | null }) {
       }}>
         <AlertCircle size={15} />
         Pesquisa bloqueada porque já existe no histórico.
+      </div>
+    )
+  }
+  if (execution.pending_execution) {
+    return (
+      <div style={{
+        display: 'grid',
+        gap: 10,
+        border: '1px solid rgba(59,130,246,0.22)',
+        background: 'rgba(59,130,246,0.08)',
+        color: 'rgba(191,219,254,1)',
+        borderRadius: 6,
+        padding: '12px 12px',
+        fontSize: 12,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <AlertCircle size={15} />
+          Briefing completo. O modo atual está em plan. Posso mudar para execute e disparar agora.
+        </div>
+        {onExecuteNow && (
+          <button
+            onClick={onExecuteNow}
+            style={{
+              justifySelf: 'start',
+              height: 32,
+              borderRadius: 6,
+              border: '1px solid rgba(59,130,246,0.35)',
+              background: 'rgba(59,130,246,0.14)',
+              color: 'white',
+              padding: '0 12px',
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Executar agora
+          </button>
+        )}
       </div>
     )
   }
@@ -200,10 +244,31 @@ export default function ResearchChat() {
     min_reviews: '',
     objective: '',
     klaviyo_list_id: '',
+    execution_mode: 'plan',
   })
   const recorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+
+  async function saveContextDraft(nextDraft = contextDraft) {
+    if (!activeThread) return
+    const cities = nextDraft.cities
+      .split(/[\n,]+/)
+      .map(city => city.trim())
+      .filter(Boolean)
+    const updated = await updateChatContext(activeThread.id, {
+      category: nextDraft.category.trim() || null,
+      query: nextDraft.query.trim() || null,
+      region: nextDraft.region.trim() || null,
+      cities,
+      leads_per_city: nextDraft.leads_per_city ? Number(nextDraft.leads_per_city) : null,
+      min_reviews: nextDraft.min_reviews ? Number(nextDraft.min_reviews) : null,
+      objective: nextDraft.objective.trim() || null,
+      klaviyo_list_id: nextDraft.klaviyo_list_id || null,
+      execution_mode: nextDraft.execution_mode as 'plan' | 'execute',
+    })
+    setContext(updated)
+  }
 
   async function loadThreads() {
     setLoading(true)
@@ -268,6 +333,7 @@ export default function ResearchChat() {
       min_reviews: context?.min_reviews ? String(context.min_reviews) : '',
       objective: context?.objective || '',
       klaviyo_list_id: context?.klaviyo_list_id || defaultKlaviyoListId || '',
+      execution_mode: context?.execution_mode || 'plan',
     })
   }, [context?.updated_at, activeThread?.id, defaultKlaviyoListId])
 
@@ -355,6 +421,27 @@ export default function ResearchChat() {
     }
   }
 
+  async function handleExecuteNow() {
+    if (!activeThread || sending) return
+    setError(null)
+    setSending(true)
+    setLastExecution(null)
+    try {
+      const result = await sendChatMessage(activeThread.id, '/execute')
+      await Promise.all([loadMessages(activeThread.id), loadThreads()])
+      setContext(result.context)
+      setLastExecution(result.execution)
+      setPlacesSnapshot(result.places_snapshot ?? null)
+      if (result.execution?.job_id) {
+        window.dispatchEvent(new CustomEvent('piranha:jobs-updated'))
+      }
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
   async function startRecording() {
     if (!activeThread || recording) return
     setError(null)
@@ -403,22 +490,13 @@ export default function ResearchChat() {
   const groupedFolders = folders.length > 0 ? folders : [{ id: 'default', name: 'Geral', created_at: '' }]
 
   async function handleSaveContext() {
-    if (!activeThread) return
-    const cities = contextDraft.cities
-      .split(/[\n,]+/)
-      .map(city => city.trim())
-      .filter(Boolean)
-    const updated = await updateChatContext(activeThread.id, {
-      category: contextDraft.category.trim() || null,
-      query: contextDraft.query.trim() || null,
-      region: contextDraft.region.trim() || null,
-      cities,
-      leads_per_city: contextDraft.leads_per_city ? Number(contextDraft.leads_per_city) : null,
-      min_reviews: contextDraft.min_reviews ? Number(contextDraft.min_reviews) : null,
-      objective: contextDraft.objective.trim() || null,
-      klaviyo_list_id: contextDraft.klaviyo_list_id || null,
-    })
-    setContext(updated)
+    await saveContextDraft()
+  }
+
+  async function handleSetExecutionMode(mode: 'plan' | 'execute') {
+    const nextDraft = { ...contextDraft, execution_mode: mode }
+    setContextDraft(nextDraft)
+    await saveContextDraft(nextDraft)
   }
 
   async function handleClearContext() {
@@ -437,6 +515,7 @@ export default function ResearchChat() {
       min_reviews: '',
       objective: '',
       klaviyo_list_id: defaultKlaviyoListId || '',
+      execution_mode: 'plan',
     })
   }
 
@@ -874,7 +953,7 @@ export default function ResearchChat() {
                 </div>
               )
             })}
-            <ExecutionNotice execution={lastExecution} />
+            <ExecutionNotice execution={lastExecution} onExecuteNow={handleExecuteNow} />
             <div ref={messagesEndRef} />
           </div>
         </section>
@@ -1036,6 +1115,7 @@ export default function ResearchChat() {
         <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
           <FieldCard label="Query" value={context?.query} />
           <FieldCard label="Região" value={context?.region} />
+          <FieldCard label="Modo" value={context?.execution_mode || 'plan'} />
           <FieldCard
             label="Lista Klaviyo"
             value={klaviyoLists.find(list => list.id === context?.klaviyo_list_id)?.name || context?.klaviyo_list_id}
@@ -1088,6 +1168,26 @@ export default function ResearchChat() {
               <FormField label="Leads/cidade" type="number" value={contextDraft.leads_per_city} onChange={value => setContextDraft(prev => ({ ...prev, leads_per_city: value }))} />
               <FormField label="Reviews mín." type="number" value={contextDraft.min_reviews} onChange={value => setContextDraft(prev => ({ ...prev, min_reviews: value }))} />
             </div>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ color: 'var(--color-text-secondary)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0 }}>Modo</span>
+              <select
+                value={contextDraft.execution_mode}
+                onChange={e => setContextDraft(prev => ({ ...prev, execution_mode: e.target.value }))}
+                style={{
+                  width: '100%',
+                  background: 'var(--color-bg-surface)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                  borderRadius: 6,
+                  padding: '9px 10px',
+                  outline: 'none',
+                  fontSize: 12,
+                }}
+              >
+                <option value="plan">Plan</option>
+                <option value="execute">Execute</option>
+              </select>
+            </label>
             <label style={{ display: 'grid', gap: 6 }}>
               <span style={{ color: 'var(--color-text-secondary)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0 }}>Lista Klaviyo</span>
               <select

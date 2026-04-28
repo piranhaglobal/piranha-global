@@ -80,6 +80,7 @@ export interface ResearchContext {
   query: string | null
   objective: string | null
   klaviyo_list_id: string | null
+  execution_mode: 'plan' | 'execute'
   completeness_status: 'complete' | 'incomplete'
   missing_fields: string
   updated_at: string
@@ -125,6 +126,8 @@ export interface ChatExecution {
   job_id?: string
   blocked_duplicate?: boolean
   existing_log?: { id: string; job_id: string | null; status: string; created_at: string }
+  pending_execution?: boolean
+  execution_mode?: 'plan' | 'execute'
 }
 
 export interface ChatPlacesBusiness {

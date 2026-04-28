@@ -155,6 +155,7 @@ def merge_context(existing: dict | None, text: str) -> dict:
         "min_reviews": min_reviews or existing.get("min_reviews"),
         "objective": existing.get("objective") or "Encontrar email e telefone do estabelecimento",
         "klaviyo_list_id": existing.get("klaviyo_list_id"),
+        "execution_mode": existing.get("execution_mode") or "plan",
     }
 
     missing_fields = []
@@ -186,4 +187,5 @@ def context_to_brief_text(context: dict) -> str:
         f"Reviews mínimas: {context.get('min_reviews') or '-'}\n"
         f"Objetivo: {context.get('objective') or '-'}\n"
         f"Lista Klaviyo: {context.get('klaviyo_list_id') or '-'}"
+        f"\nModo: {context.get('execution_mode') or 'plan'}"
     )
