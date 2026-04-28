@@ -9,7 +9,14 @@
   "scripts": {
     "test": "node bin/aiox-core.js --help",
     "pixel-agents": "node scripts/pixel-agents-setup.js",
-    "pixel-agents:demo": "node scripts/pixel-agents-setup.js --demo"
+    "pixel-agents:demo": "node scripts/pixel-agents-setup.js --demo",
+    "voice": "bash piranha-squad-ui/start.sh",
+    "voice:dev": "NODE_ENV=development bash piranha-squad-ui/start.sh",
+    "voice:sonnet": "VOICE_MODEL=claude-sonnet-4-6 bash piranha-squad-ui/start.sh",
+    "design:lint": "npx @google/design.md lint DESIGN.md",
+    "design:export:tailwind": "npx @google/design.md export --format tailwind DESIGN.md",
+    "design:export:dtcg": "npx @google/design.md export --format dtcg DESIGN.md",
+    "design:check": "npm run design:lint"
   },
   "keywords": [
     "ai",
@@ -32,6 +39,11 @@
     "ora": "5.4.1",
     "prompts": "^2.4.2",
     "twilio": "^5.12.2",
+    "ultravox-client": "^0.5.0",
+    "ws": "^8.20.0",
     "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@google/design.md": "^0.1.1"
   }
 }
