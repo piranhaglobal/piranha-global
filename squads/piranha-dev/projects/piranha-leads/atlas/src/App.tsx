@@ -1,18 +1,16 @@
 import { useEffect, useState } from 'react'
-import { Database, LogIn, LogOut, MessageSquare, Radio, Settings as SettingsIcon } from 'lucide-react'
+import { Database, LogIn, LogOut, Radio, Settings as SettingsIcon } from 'lucide-react'
 import StudioDatabase from './components/views/StudioDatabase'
 import ScraperControl from './components/views/ScraperControl'
 import Settings from './components/views/Settings'
-import ResearchChat from './components/views/ResearchChat'
 import logoUrl from './assets/logo.svg'
 
-type Tab = 'database' | 'scraper' | 'chat' | 'settings'
+type Tab = 'database' | 'scraper' | 'settings'
 type AuthConfig = { required: boolean; google_configured: boolean; domain: string }
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'database', label: 'Studio Database', icon: <Database size={16} /> },
   { id: 'scraper', label: 'Scraper Control', icon: <Radio size={16} /> },
-  { id: 'chat', label: 'Chat', icon: <MessageSquare size={16} /> },
   { id: 'settings', label: 'Settings', icon: <SettingsIcon size={16} /> },
 ]
 
@@ -196,7 +194,6 @@ export default function App() {
       <main className="flex-1 overflow-hidden" style={{ minHeight: 0 }}>
         {activeTab === 'database' && <StudioDatabase />}
         {activeTab === 'scraper' && <ScraperControl />}
-        {activeTab === 'chat' && <ResearchChat />}
         {activeTab === 'settings' && <Settings />}
       </main>
     </div>
