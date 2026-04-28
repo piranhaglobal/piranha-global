@@ -5,7 +5,73 @@ from typing import Any
 
 from collectors.google_places import search_studios_in_city
 from config import SPAIN_CITIES
-from utils.research_context import COUNTRY_ALIASES, COUNTRY_CITIES
+
+COUNTRY_CITIES = {
+    "es": [
+        "Madrid", "Barcelona", "Valencia", "Sevilla", "Zaragoza", "Málaga", "Murcia",
+        "Palma", "Las Palmas de Gran Canaria", "Bilbao", "Alicante", "Córdoba",
+        "Valladolid", "Vigo", "Gijón", "L'Hospitalet de Llobregat", "A Coruña",
+        "Vitoria-Gasteiz", "Granada", "Elche", "Oviedo", "Badalona", "Cartagena",
+        "Terrassa", "Jerez de la Frontera", "Sabadell", "Móstoles", "Alcalá de Henares",
+        "Pamplona", "Fuenlabrada", "Almería", "Leganés", "Donostia-San Sebastián",
+        "Getafe", "Burgos", "Santander", "Castellón de la Plana", "Albacete", "Logroño",
+        "Badajoz", "Salamanca", "Huelva", "Tarragona", "Lleida", "León", "Cádiz",
+        "Jaén", "Ourense", "Lugo", "Girona", "Toledo", "Cáceres", "Ciudad Real",
+        "Cuenca", "Guadalajara", "Huesca", "Palencia", "Pontevedra", "Segovia",
+        "Soria", "Teruel", "Zamora", "Santa Cruz de Tenerife", "Ávila", "Ceuta",
+        "Melilla",
+    ],
+    "pt": [
+        "Lisboa", "Porto", "Vila Nova de Gaia", "Amadora", "Braga", "Funchal",
+        "Coimbra", "Setúbal", "Almada", "Agualva-Cacém", "Queluz", "Rio Tinto",
+        "Évora", "Cascais", "Oeiras", "Aveiro", "Faro", "Viseu", "Loures", "Guimarães",
+    ],
+    "fr": [
+        "Paris", "Marseille", "Lyon", "Toulouse", "Nice", "Nantes", "Montpellier",
+        "Strasbourg", "Bordeaux", "Lille", "Rennes", "Reims", "Le Havre", "Saint-Étienne",
+        "Toulon", "Grenoble", "Dijon", "Angers", "Nîmes", "Villeurbanne",
+    ],
+    "it": [
+        "Roma", "Milano", "Napoli", "Torino", "Palermo", "Genova", "Bologna", "Firenze",
+        "Bari", "Catania", "Verona", "Venezia", "Messina", "Padova", "Trieste", "Brescia",
+        "Taranto", "Prato", "Reggio Calabria", "Modena",
+    ],
+    "de": [
+        "Berlin", "Hamburg", "München", "Köln", "Frankfurt am Main", "Stuttgart",
+        "Düsseldorf", "Leipzig", "Dortmund", "Essen", "Bremen", "Dresden", "Hannover",
+        "Nürnberg", "Duisburg", "Bochum", "Wuppertal", "Bielefeld", "Bonn", "Münster",
+    ],
+    "uk": [
+        "London", "Birmingham", "Manchester", "Leeds", "Glasgow", "Liverpool", "Bristol",
+        "Sheffield", "Edinburgh", "Leicester", "Coventry", "Bradford", "Cardiff", "Belfast",
+        "Nottingham", "Newcastle upon Tyne", "Sunderland", "Brighton", "Hull", "Plymouth",
+    ],
+    "nl": [
+        "Amsterdam", "Rotterdam", "The Hague", "Utrecht", "Eindhoven", "Tilburg", "Groningen",
+        "Almere", "Breda", "Nijmegen", "Enschede", "Haarlem", "Arnhem", "Zaanstad", "Amersfoort",
+    ],
+}
+
+COUNTRY_ALIASES = {
+    "espanha": ("es", "Espanha"),
+    "spain": ("es", "Espanha"),
+    "portugal": ("pt", "Portugal"),
+    "frança": ("fr", "França"),
+    "franca": ("fr", "França"),
+    "france": ("fr", "França"),
+    "itália": ("it", "Itália"),
+    "italia": ("it", "Itália"),
+    "italy": ("it", "Itália"),
+    "alemanha": ("de", "Alemanha"),
+    "alemanhá": ("de", "Alemanha"),
+    "germany": ("de", "Alemanha"),
+    "reino unido": ("uk", "Reino Unido"),
+    "united kingdom": ("uk", "Reino Unido"),
+    "uk": ("uk", "Reino Unido"),
+    "holanda": ("nl", "Países Baixos"),
+    "paises baixos": ("nl", "Países Baixos"),
+    "netherlands": ("nl", "Países Baixos"),
+}
 
 
 _CACHE: dict[str, tuple[float, dict[str, Any]]] = {}

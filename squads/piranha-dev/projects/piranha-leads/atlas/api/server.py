@@ -115,55 +115,6 @@ class JobStartRequest(BaseModel):
     use_firecrawl: bool = False
     validate_and_enrich: bool = False
     auto_klaviyo: bool = False
-    klaviyo_list_id: str | None = None
-
-
-class ChatThreadCreateRequest(BaseModel):
-    title: str = "Nova pesquisa"
-    folder_id: str | None = None
-
-
-class ChatMessageRequest(BaseModel):
-    content: str
-
-
-class ChatFolderCreateRequest(BaseModel):
-    name: str
-
-
-class ChatThreadFolderRequest(BaseModel):
-    folder_id: str | None = None
-
-
-class ChatContextUpdateRequest(BaseModel):
-    category: str | None = None
-    region: str | None = None
-    cities: list[str] = []
-    leads_per_city: int | None = None
-    min_reviews: int | None = None
-    query: str | None = None
-    objective: str | None = None
-    klaviyo_list_id: str | None = None
-    execution_mode: str | None = None
-
-
-class ChatPlacesInsightsRequest(BaseModel):
-    prompt: str | None = None
-
-
-class ChatThreadRenameRequest(BaseModel):
-    title: str
-
-
-class ChatThreadQueueRequest(BaseModel):
-    enabled: bool
-
-
-def _normalize_execution_mode(value: str | None) -> str:
-    if not value:
-        return "plan"
-    mode = value.strip().lower()
-    return "execute" if mode == "execute" else "plan"
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -308,7 +259,6 @@ def _launch_scraper_job(req: JobStartRequest) -> str:
                 use_firecrawl=req.use_firecrawl,
                 auto_klaviyo=req.auto_klaviyo,
                 validate_and_enrich=req.validate_and_enrich,
-                klaviyo_list_id_override=req.klaviyo_list_id,
             )
         except Exception as e:
             update_job(job_id, status="failed", error=str(e))
