@@ -128,6 +128,7 @@ class JobStartRequest(BaseModel):
     use_firecrawl: bool = False
     validate_and_enrich: bool = False
     auto_klaviyo: bool = False
+    klaviyo_list_id: str | None = None
 
 
 class ChatThreadCreateRequest(BaseModel):
@@ -155,6 +156,7 @@ class ChatContextUpdateRequest(BaseModel):
     min_reviews: int | None = None
     query: str | None = None
     objective: str | None = None
+    klaviyo_list_id: str | None = None
 
 
 class ChatPlacesInsightsRequest(BaseModel):
@@ -311,6 +313,7 @@ def _launch_scraper_job(req: JobStartRequest) -> str:
                 use_firecrawl=req.use_firecrawl,
                 auto_klaviyo=req.auto_klaviyo,
                 validate_and_enrich=req.validate_and_enrich,
+                klaviyo_list_id_override=req.klaviyo_list_id,
             )
         except Exception as e:
             update_job(job_id, status="failed", error=str(e))
@@ -408,8 +411,9 @@ def _execute_complete_context(thread_id: str, context: dict) -> dict | None:
         cities=context["cities"],
         enrich_email=True,
         use_firecrawl=False,
-        validate_and_enrich=False,
-        auto_klaviyo=False,
+        validate_and_enrich=True,
+        auto_klaviyo=True,
+        klaviyo_list_id=context.get("klaviyo_list_id"),
     ))
     update_brief(brief["id"], status="executed", executed_job_id=job_id)
     log = create_research_log(thread_id, brief["id"], context, job_id, "executed")
@@ -660,6 +664,7 @@ def chat_update_context(thread_id: str, req: ChatContextUpdateRequest):
         "min_reviews": req.min_reviews,
         "query": req.query.strip() if req.query else None,
         "objective": req.objective.strip() if req.objective else None,
+        "klaviyo_list_id": req.klaviyo_list_id.strip() if req.klaviyo_list_id else None,
         "missing_fields": [],
     }
     if not context["category"]:
@@ -670,6 +675,8 @@ def chat_update_context(thread_id: str, req: ChatContextUpdateRequest):
         context["missing_fields"].append("leads_per_city")
     if not context["min_reviews"]:
         context["missing_fields"].append("min_reviews")
+    if not context["klaviyo_list_id"]:
+        context["missing_fields"].append("klaviyo_list_id")
     return upsert_context(thread_id, context)
 
 

@@ -35,12 +35,15 @@ import {
   updateChatContext,
 } from '../../services/chatService'
 import type { ChatQueueItem } from '../../types'
+import type { KlaviyoList } from '../../types'
+import { fetchKlaviyoLists } from '../../services/klaviyoService'
 
 const missingLabels: Record<string, string> = {
   category: 'Categoria',
   region_or_cities: 'Região ou cidades',
   leads_per_city: 'Leads por cidade',
   min_reviews: 'Reviews mínimas',
+  klaviyo_list_id: 'Lista Klaviyo',
 }
 
 function FieldCard({ label, value, muted }: { label: string; value: string | number | null | undefined; muted?: boolean }) {
@@ -175,6 +178,8 @@ export default function ResearchChat() {
   const [threads, setThreads] = useState<ChatThread[]>([])
   const [queueItems, setQueueItems] = useState<ChatQueueItem[]>([])
   const [queueEta, setQueueEta] = useState<number>(0)
+  const [klaviyoLists, setKlaviyoLists] = useState<KlaviyoList[]>([])
+  const [defaultKlaviyoListId, setDefaultKlaviyoListId] = useState('')
   const [activeThread, setActiveThread] = useState<ChatThread | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [context, setContext] = useState<ResearchContext | null>(null)
@@ -194,6 +199,7 @@ export default function ResearchChat() {
     leads_per_city: '',
     min_reviews: '',
     objective: '',
+    klaviyo_list_id: '',
   })
   const recorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -208,6 +214,7 @@ export default function ResearchChat() {
         fetchChatFolders().catch(() => []),
         fetchChatQueue().catch(() => ({ scheduled_for: '', seconds_until_run: 0, items: [] })),
       ])
+      const klaviyoData = await fetchKlaviyoLists().catch(() => ({ lists: [], default_list_id: '' }))
       if (data.length === 0) {
         const created = await createChatThread()
         data = [created]
@@ -215,6 +222,8 @@ export default function ResearchChat() {
       setFolders(folderData)
       setQueueItems(queueData.items)
       setQueueEta(queueData.seconds_until_run)
+      setKlaviyoLists(klaviyoData.lists)
+      setDefaultKlaviyoListId(klaviyoData.default_list_id || '')
       setThreads(data)
       setActiveThread(prev => prev || data[0])
     } catch (e) {
@@ -258,8 +267,9 @@ export default function ResearchChat() {
       leads_per_city: context?.leads_per_city ? String(context.leads_per_city) : '',
       min_reviews: context?.min_reviews ? String(context.min_reviews) : '',
       objective: context?.objective || '',
+      klaviyo_list_id: context?.klaviyo_list_id || defaultKlaviyoListId || '',
     })
-  }, [context?.updated_at, activeThread?.id])
+  }, [context?.updated_at, activeThread?.id, defaultKlaviyoListId])
 
   async function handleNewThread() {
     const thread = await createChatThread('Nova pesquisa', activeThread?.folder_id || 'default')
@@ -406,6 +416,7 @@ export default function ResearchChat() {
       leads_per_city: contextDraft.leads_per_city ? Number(contextDraft.leads_per_city) : null,
       min_reviews: contextDraft.min_reviews ? Number(contextDraft.min_reviews) : null,
       objective: contextDraft.objective.trim() || null,
+      klaviyo_list_id: contextDraft.klaviyo_list_id || null,
     })
     setContext(updated)
   }
@@ -425,6 +436,7 @@ export default function ResearchChat() {
       leads_per_city: '',
       min_reviews: '',
       objective: '',
+      klaviyo_list_id: defaultKlaviyoListId || '',
     })
   }
 
@@ -1024,6 +1036,10 @@ export default function ResearchChat() {
         <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
           <FieldCard label="Query" value={context?.query} />
           <FieldCard label="Região" value={context?.region} />
+          <FieldCard
+            label="Lista Klaviyo"
+            value={klaviyoLists.find(list => list.id === context?.klaviyo_list_id)?.name || context?.klaviyo_list_id}
+          />
           <FieldCard label="Objetivo" value={context?.objective} muted />
         </div>
 
@@ -1072,6 +1088,28 @@ export default function ResearchChat() {
               <FormField label="Leads/cidade" type="number" value={contextDraft.leads_per_city} onChange={value => setContextDraft(prev => ({ ...prev, leads_per_city: value }))} />
               <FormField label="Reviews mín." type="number" value={contextDraft.min_reviews} onChange={value => setContextDraft(prev => ({ ...prev, min_reviews: value }))} />
             </div>
+            <label style={{ display: 'grid', gap: 6 }}>
+              <span style={{ color: 'var(--color-text-secondary)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0 }}>Lista Klaviyo</span>
+              <select
+                value={contextDraft.klaviyo_list_id}
+                onChange={e => setContextDraft(prev => ({ ...prev, klaviyo_list_id: e.target.value }))}
+                style={{
+                  width: '100%',
+                  background: 'var(--color-bg-surface)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                  borderRadius: 6,
+                  padding: '9px 10px',
+                  outline: 'none',
+                  fontSize: 12,
+                }}
+              >
+                <option value="">Selecionar lista</option>
+                {klaviyoLists.map(list => (
+                  <option key={list.id} value={list.id}>{list.name}</option>
+                ))}
+              </select>
+            </label>
             <FormField label="Objetivo" value={contextDraft.objective} onChange={value => setContextDraft(prev => ({ ...prev, objective: value }))} multiline />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>

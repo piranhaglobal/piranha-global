@@ -89,6 +89,7 @@ def run(
     use_firecrawl=None,
     auto_klaviyo=True,
     validate_and_enrich=False,
+    klaviyo_list_id_override=None,
 ):
     from config import SEARCH_QUERY
     api_key = os.getenv("GOOGLE_PLACES_API_KEY")
@@ -281,7 +282,7 @@ def run(
     export_csv()
 
     # --- Klaviyo sync ---
-    klaviyo_list_id = os.getenv("KLAVIYO_LIST_ID", "S9Qa55")
+    klaviyo_list_id = klaviyo_list_id_override or os.getenv("KLAVIYO_LIST_ID", "S9Qa55")
     klaviyo_key = os.getenv("KLAVIYO_PRIVATE_API_KEY")
     if auto_klaviyo and klaviyo_key:
         if progress_callback:

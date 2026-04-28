@@ -154,6 +154,7 @@ def merge_context(existing: dict | None, text: str) -> dict:
         "leads_per_city": leads_per_city or existing.get("leads_per_city"),
         "min_reviews": min_reviews or existing.get("min_reviews"),
         "objective": existing.get("objective") or "Encontrar email e telefone do estabelecimento",
+        "klaviyo_list_id": existing.get("klaviyo_list_id"),
     }
 
     missing_fields = []
@@ -165,6 +166,8 @@ def merge_context(existing: dict | None, text: str) -> dict:
         missing_fields.append("leads_per_city")
     if not context["min_reviews"]:
         missing_fields.append("min_reviews")
+    if not context["klaviyo_list_id"]:
+        missing_fields.append("klaviyo_list_id")
     context["missing_fields"] = missing_fields
     return context
 
@@ -181,5 +184,6 @@ def context_to_brief_text(context: dict) -> str:
         f"Cidades: {city_preview or '-'}\n"
         f"Leads por cidade: {context.get('leads_per_city') or '-'}\n"
         f"Reviews mínimas: {context.get('min_reviews') or '-'}\n"
-        f"Objetivo: {context.get('objective') or '-'}"
+        f"Objetivo: {context.get('objective') or '-'}\n"
+        f"Lista Klaviyo: {context.get('klaviyo_list_id') or '-'}"
     )

@@ -79,6 +79,7 @@ export interface ResearchContext {
   min_reviews: number | null
   query: string | null
   objective: string | null
+  klaviyo_list_id: string | null
   completeness_status: 'complete' | 'incomplete'
   missing_fields: string
   updated_at: string

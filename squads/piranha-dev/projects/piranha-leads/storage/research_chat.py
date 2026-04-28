@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS chat_contexts (
     min_reviews         INTEGER,
     query               TEXT,
     objective           TEXT,
+    klaviyo_list_id     TEXT,
     completeness_status TEXT DEFAULT 'incomplete',
     missing_fields      TEXT,
     updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -129,6 +130,10 @@ def init_research_chat_tables() -> None:
         conn.execute(CREATE_RESEARCH_LOG_SQL)
         try:
             conn.execute("ALTER TABLE chat_threads ADD COLUMN folder_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE chat_contexts ADD COLUMN klaviyo_list_id TEXT")
         except sqlite3.OperationalError:
             pass
         if not conn.execute("SELECT 1 FROM chat_folders WHERE id = 'default'").fetchone():
@@ -286,9 +291,9 @@ def upsert_context(thread_id: str, context: dict) -> dict:
             """
             INSERT INTO chat_contexts (
                 thread_id, category, region, region_band_id, cities_json, leads_per_city,
-                min_reviews, query, objective, completeness_status, missing_fields, updated_at
+                min_reviews, query, objective, klaviyo_list_id, completeness_status, missing_fields, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 category=excluded.category,
                 region=excluded.region,
@@ -298,6 +303,7 @@ def upsert_context(thread_id: str, context: dict) -> dict:
                 min_reviews=excluded.min_reviews,
                 query=excluded.query,
                 objective=excluded.objective,
+                klaviyo_list_id=excluded.klaviyo_list_id,
                 completeness_status=excluded.completeness_status,
                 missing_fields=excluded.missing_fields,
                 updated_at=excluded.updated_at
@@ -312,6 +318,7 @@ def upsert_context(thread_id: str, context: dict) -> dict:
                 context.get("min_reviews"),
                 context.get("query"),
                 context.get("objective"),
+                context.get("klaviyo_list_id"),
                 completeness,
                 ",".join(missing_fields),
                 now,
@@ -388,6 +395,7 @@ def create_brief(thread_id: str, context: dict) -> dict:
         "min_reviews": context.get("min_reviews"),
         "query": context.get("query"),
         "objective": context.get("objective"),
+        "klaviyo_list_id": context.get("klaviyo_list_id"),
         "dedupe_key": make_dedupe_key(context),
     }
     now = _now()

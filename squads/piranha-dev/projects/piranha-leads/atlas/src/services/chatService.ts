@@ -125,6 +125,7 @@ export async function updateChatContext(threadId: string, context: Partial<Resea
       min_reviews: context.min_reviews || null,
       query: context.query || null,
       objective: context.objective || null,
+      klaviyo_list_id: context.klaviyo_list_id || null,
     }),
   })
   if (!res.ok) throw new Error('Failed to update context')
