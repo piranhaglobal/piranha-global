@@ -100,6 +100,15 @@ export interface ChatFolder {
   created_at: string
 }
 
+export interface ChatQueueItem extends ResearchContext {
+  title: string
+  folder_id: string | null
+  usable_for_cron: 0 | 1
+  queue_status: 'scheduled' | 'paused' | 'already_done'
+  scheduled_for: string
+  seconds_until_run: number
+}
+
 export interface ChatMessage {
   id: string
   thread_id: string

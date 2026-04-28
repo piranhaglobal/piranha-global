@@ -39,7 +39,8 @@ from storage.research_chat import (
     list_messages, get_context, upsert_context, create_brief, update_brief,
     find_research_log_by_key, create_research_log, list_research_log, list_complete_contexts,
     make_dedupe_key, list_folders, create_folder, set_thread_folder, delete_thread,
-    clear_context,
+    clear_context, delete_folder, update_thread_title, set_thread_cron_enabled,
+    list_queued_contexts,
 )
 from storage.klaviyo_lists import load_klaviyo_lists, upsert_klaviyo_list, delete_klaviyo_list
 from integrations.klaviyo import get_list_details, sync_leads_to_klaviyo
@@ -158,6 +159,14 @@ class ChatContextUpdateRequest(BaseModel):
 
 class ChatPlacesInsightsRequest(BaseModel):
     prompt: str | None = None
+
+
+class ChatThreadRenameRequest(BaseModel):
+    title: str
+
+
+class ChatThreadQueueRequest(BaseModel):
+    enabled: bool
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -416,6 +425,15 @@ def _seconds_until_next_daily_run() -> float:
     return (target - now).total_seconds()
 
 
+def _next_daily_run_at() -> datetime:
+    tz = ZoneInfo("Europe/Lisbon")
+    now = datetime.now(tz)
+    target = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target = target + timedelta(days=1)
+    return target
+
+
 def _run_daily_chat_context() -> dict | None:
     for context in list_complete_contexts():
         if find_research_log_by_key(make_dedupe_key(context)):
@@ -475,6 +493,49 @@ def chat_folders():
 @app.post("/api/chat/folders")
 def chat_create_folder(req: ChatFolderCreateRequest):
     return create_folder(req.name)
+
+
+@app.delete("/api/chat/folders/{folder_id}")
+def chat_delete_folder(folder_id: str):
+    try:
+        delete_folder(folder_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"deleted": folder_id}
+
+
+@app.post("/api/chat/threads/{thread_id}/rename")
+def chat_rename_thread(thread_id: str, req: ChatThreadRenameRequest):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+    update_thread_title(thread_id, req.title.strip())
+    return get_thread(thread_id)
+
+
+@app.post("/api/chat/threads/{thread_id}/queue")
+def chat_set_thread_queue(thread_id: str, req: ChatThreadQueueRequest):
+    if not get_thread(thread_id):
+        raise HTTPException(404, "Thread not found")
+    set_thread_cron_enabled(thread_id, req.enabled)
+    return get_thread(thread_id)
+
+
+@app.get("/api/chat/queue")
+def chat_queue():
+    next_run = _next_daily_run_at()
+    seconds_until = int(max(_seconds_until_next_daily_run(), 0))
+    items = []
+    for item in list_queued_contexts():
+        queued = bool(item.get("usable_for_cron"))
+        dedupe_exists = bool(find_research_log_by_key(make_dedupe_key(item)))
+        status = "scheduled" if queued and not dedupe_exists else "paused" if not queued else "already_done"
+        items.append({
+            **item,
+            "queue_status": status,
+            "scheduled_for": next_run.isoformat(),
+            "seconds_until_run": seconds_until,
+        })
+    return {"scheduled_for": next_run.isoformat(), "seconds_until_run": seconds_until, "items": items}
 
 
 @app.get("/api/chat/threads/{thread_id}/messages")

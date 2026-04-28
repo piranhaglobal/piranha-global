@@ -20,16 +20,21 @@ import {
   clearChatContext,
   createChatFolder,
   createChatThread,
+  deleteChatFolder,
   deleteChatThread,
+  fetchChatQueue,
   fetchChatFolders,
   fetchChatMessages,
   fetchChatPlacesInsights,
   fetchChatThreads,
   moveChatThread,
+  renameChatThread,
+  setChatThreadQueue,
   sendChatMessage,
   transcribeChatAudio,
   updateChatContext,
 } from '../../services/chatService'
+import type { ChatQueueItem } from '../../types'
 
 const missingLabels: Record<string, string> = {
   category: 'Categoria',
@@ -54,9 +59,9 @@ function FieldCard({ label, value, muted }: { label: string; value: string | num
         color: value ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
         fontSize: 13,
         fontWeight: value ? 650 : 500,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
+        whiteSpace: 'normal',
+        wordBreak: 'break-word',
+        lineHeight: 1.45,
       }}>
         {value || '-'}
       </div>
@@ -158,9 +163,18 @@ function formatThreadDate(value: string) {
   }
 }
 
+function formatCountdown(seconds: number) {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (hours <= 0) return `${minutes}m`
+  return `${hours}h ${minutes}m`
+}
+
 export default function ResearchChat() {
   const [folders, setFolders] = useState<ChatFolder[]>([])
   const [threads, setThreads] = useState<ChatThread[]>([])
+  const [queueItems, setQueueItems] = useState<ChatQueueItem[]>([])
+  const [queueEta, setQueueEta] = useState<number>(0)
   const [activeThread, setActiveThread] = useState<ChatThread | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [context, setContext] = useState<ResearchContext | null>(null)
@@ -190,12 +204,17 @@ export default function ResearchChat() {
     setError(null)
     try {
       let data = await fetchChatThreads()
-      const folderData = await fetchChatFolders().catch(() => [])
+      const [folderData, queueData] = await Promise.all([
+        fetchChatFolders().catch(() => []),
+        fetchChatQueue().catch(() => ({ scheduled_for: '', seconds_until_run: 0, items: [] })),
+      ])
       if (data.length === 0) {
         const created = await createChatThread()
         data = [created]
       }
       setFolders(folderData)
+      setQueueItems(queueData.items)
+      setQueueEta(queueData.seconds_until_run)
       setThreads(data)
       setActiveThread(prev => prev || data[0])
     } catch (e) {
@@ -259,6 +278,23 @@ export default function ResearchChat() {
     setFolders(prev => [...prev, folder])
   }
 
+  async function handleDeleteFolder(folder: ChatFolder) {
+    if (folder.id === 'default') return
+    const ok = window.confirm(`Apagar a pasta "${folder.name}"? Os chats regressam a "Geral".`)
+    if (!ok) return
+    await deleteChatFolder(folder.id)
+    await loadThreads()
+  }
+
+  async function handleRenameThread(thread: ChatThread) {
+    const title = window.prompt('Novo nome da conversa', thread.title)
+    if (!title?.trim()) return
+    const updated = await renameChatThread(thread.id, title.trim())
+    setThreads(prev => prev.map(item => item.id === updated.id ? updated : item))
+    if (activeThread?.id === updated.id) setActiveThread(updated)
+    await loadThreads()
+  }
+
   async function handleDeleteThread(thread: ChatThread) {
     const ok = window.confirm(`Apagar "${thread.title}" e limpar toda a memória/contexto desta conversa?`)
     if (!ok) return
@@ -279,6 +315,11 @@ export default function ResearchChat() {
     const updated = await moveChatThread(activeThread.id, folderId)
     setActiveThread(updated)
     setThreads(prev => prev.map(thread => thread.id === updated.id ? updated : thread))
+  }
+
+  async function handleQueueToggle(threadId: string, enabled: boolean) {
+    await setChatThreadQueue(threadId, enabled)
+    await loadThreads()
   }
 
   async function handleSend() {
@@ -477,6 +518,92 @@ export default function ResearchChat() {
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
+          {queueItems.length > 0 && (
+            <div style={{
+              marginBottom: 14,
+              border: '1px solid rgba(34,197,94,0.16)',
+              background: 'rgba(34,197,94,0.06)',
+              borderRadius: 8,
+              padding: 10,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                <div style={{ color: 'var(--color-text-primary)', fontSize: 12, fontWeight: 700 }}>
+                  Fila pronta
+                </div>
+                <div style={{ color: 'var(--color-text-secondary)', fontSize: 11 }}>
+                  {formatCountdown(queueEta)}
+                </div>
+              </div>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {queueItems.slice(0, 4).map(item => (
+                  <div
+                    key={item.thread_id}
+                    style={{
+                      border: '1px solid var(--color-border)',
+                      background: 'rgba(0,0,0,0.18)',
+                      borderRadius: 7,
+                      padding: 10,
+                    }}
+                  >
+                    <button
+                      onClick={() => {
+                        const thread = threads.find(entry => entry.id === item.thread_id)
+                        if (thread) setActiveThread(thread)
+                      }}
+                      style={{
+                        width: '100%',
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'inherit',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        padding: 0,
+                      }}
+                    >
+                      <div style={{ color: 'var(--color-text-primary)', fontSize: 12, fontWeight: 700 }}>
+                        {item.title}
+                      </div>
+                      <div style={{ color: 'var(--color-text-secondary)', fontSize: 11, marginTop: 4, lineHeight: 1.45 }}>
+                        {item.query} · {item.cities?.length || 0} cidades · +{item.min_reviews || 0} reviews
+                      </div>
+                    </button>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                      <button
+                        onClick={() => handleQueueToggle(item.thread_id, item.queue_status !== 'scheduled')}
+                        style={{
+                          flex: 1,
+                          height: 28,
+                          borderRadius: 6,
+                          border: '1px solid var(--color-border)',
+                          background: 'var(--color-bg-surface)',
+                          color: 'var(--color-text-primary)',
+                          fontSize: 11,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {item.queue_status === 'scheduled' ? 'Pausar' : 'Manter na fila'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteThread({ id: item.thread_id, title: item.title } as ChatThread)}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 6,
+                          border: '1px solid rgba(239,68,68,0.24)',
+                          background: 'rgba(239,68,68,0.10)',
+                          color: '#FCA5A5',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {loading ? (
             <div style={{ color: 'var(--color-text-secondary)', fontSize: 12, padding: 12 }}>A carregar threads...</div>
           ) : groupedFolders.map(folder => {
@@ -484,9 +611,30 @@ export default function ResearchChat() {
             if (folderThreads.length === 0 && folder.id !== 'default') return null
             return (
               <div key={folder.id} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 700, padding: '5px 6px 8px' }}>
-                  <Folder size={12} />
-                  {folder.name}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 7, color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 700, padding: '5px 6px 8px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <Folder size={12} />
+                    {folder.name}
+                  </span>
+                  {folder.id !== 'default' && (
+                    <button
+                      onClick={() => handleDeleteFolder(folder)}
+                      title="Apagar pasta"
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 5,
+                        border: '1px solid transparent',
+                        background: 'transparent',
+                        color: 'var(--color-text-secondary)',
+                        display: 'grid',
+                        placeItems: 'center',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  )}
                 </div>
                 {folderThreads.map(thread => {
                   const selected = activeThread?.id === thread.id
@@ -518,6 +666,28 @@ export default function ResearchChat() {
                           <span>#{thread.id}</span>
                           <span>{formatThreadDate(thread.updated_at)}</span>
                         </div>
+                      </button>
+                      <button
+                        onClick={() => handleRenameThread(thread)}
+                        title="Renomear conversa"
+                        style={{
+                          position: 'absolute',
+                          top: 9,
+                          right: 36,
+                          width: 26,
+                          height: 26,
+                          borderRadius: 5,
+                          border: '1px solid transparent',
+                          background: 'transparent',
+                          color: 'var(--color-text-secondary)',
+                          display: 'grid',
+                          placeItems: 'center',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          fontWeight: 700,
+                        }}
+                      >
+                        R
                       </button>
                       <button
                         onClick={() => handleDeleteThread(thread)}
@@ -584,7 +754,7 @@ export default function ResearchChat() {
               }}
             >
               <Sparkles size={14} />
-              Google Places
+              Insights Maps
             </button>
             <div style={{
               display: 'flex',

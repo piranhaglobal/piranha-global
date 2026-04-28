@@ -186,6 +186,18 @@ def create_folder(name: str) -> dict:
         return dict(row)
 
 
+def delete_folder(folder_id: str) -> None:
+    if folder_id == "default":
+        raise ValueError("Default folder cannot be deleted")
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE chat_threads SET folder_id = 'default', updated_at = ? WHERE folder_id = ?",
+            (_now(), folder_id),
+        )
+        conn.execute("DELETE FROM chat_folders WHERE id = ?", (folder_id,))
+        conn.commit()
+
+
 def set_thread_folder(thread_id: str, folder_id: str | None) -> None:
     with get_connection() as conn:
         conn.execute(
@@ -210,6 +222,15 @@ def update_thread_title(thread_id: str, title: str) -> None:
         conn.execute(
             "UPDATE chat_threads SET title = ?, updated_at = ? WHERE id = ?",
             (title[:80] or "Nova pesquisa", _now(), thread_id),
+        )
+        conn.commit()
+
+
+def set_thread_cron_enabled(thread_id: str, enabled: bool) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE chat_threads SET usable_for_cron = ?, updated_at = ? WHERE id = ?",
+            (1 if enabled else 0, _now(), thread_id),
         )
         conn.commit()
 
@@ -316,9 +337,26 @@ def list_complete_contexts() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT * FROM chat_contexts
-            WHERE completeness_status = 'complete'
-            ORDER BY updated_at DESC
+            SELECT c.*, t.title, t.folder_id, t.usable_for_cron
+            FROM chat_contexts c
+            JOIN chat_threads t ON t.id = c.thread_id
+            WHERE c.completeness_status = 'complete'
+              AND t.usable_for_cron = 1
+            ORDER BY c.updated_at DESC
+            """
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+
+def list_queued_contexts() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.*, t.title, t.folder_id, t.usable_for_cron
+            FROM chat_contexts c
+            JOIN chat_threads t ON t.id = c.thread_id
+            WHERE c.completeness_status = 'complete'
+            ORDER BY t.usable_for_cron DESC, c.updated_at DESC
             """
         ).fetchall()
         return [_row_to_dict(row) for row in rows]

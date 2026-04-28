@@ -1,4 +1,4 @@
-import type { ChatFolder, ChatMessage, ChatPlacesSnapshot, ChatSendResponse, ChatThread, ResearchContext } from '../types'
+import type { ChatFolder, ChatMessage, ChatPlacesSnapshot, ChatQueueItem, ChatSendResponse, ChatThread, ResearchContext } from '../types'
 
 export async function fetchChatThreads(): Promise<ChatThread[]> {
   const res = await fetch('/api/chat/threads')
@@ -31,6 +31,26 @@ export async function moveChatThread(threadId: string, folderId: string | null):
   return res.json()
 }
 
+export async function renameChatThread(threadId: string, title: string): Promise<ChatThread> {
+  const res = await fetch(`/api/chat/threads/${threadId}/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+  if (!res.ok) throw new Error('Failed to rename chat thread')
+  return res.json()
+}
+
+export async function setChatThreadQueue(threadId: string, enabled: boolean): Promise<ChatThread> {
+  const res = await fetch(`/api/chat/threads/${threadId}/queue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+  if (!res.ok) throw new Error('Failed to update queue state')
+  return res.json()
+}
+
 export async function fetchChatFolders(): Promise<ChatFolder[]> {
   const res = await fetch('/api/chat/folders')
   if (!res.ok) throw new Error('Failed to fetch chat folders')
@@ -45,6 +65,11 @@ export async function createChatFolder(name: string): Promise<ChatFolder> {
   })
   if (!res.ok) throw new Error('Failed to create chat folder')
   return res.json()
+}
+
+export async function deleteChatFolder(folderId: string): Promise<void> {
+  const res = await fetch(`/api/chat/folders/${folderId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Failed to delete chat folder')
 }
 
 export async function fetchChatMessages(threadId: string): Promise<{ messages: ChatMessage[]; context: ResearchContext | null }> {
@@ -120,4 +145,10 @@ export async function fetchChatPlacesInsights(threadId: string, prompt?: string)
   if (!res.ok) throw new Error('Failed to generate places insights')
   const data = await res.json()
   return data.snapshot ?? null
+}
+
+export async function fetchChatQueue(): Promise<{ scheduled_for: string; seconds_until_run: number; items: ChatQueueItem[] }> {
+  const res = await fetch('/api/chat/queue')
+  if (!res.ok) throw new Error('Failed to fetch chat queue')
+  return res.json()
 }
